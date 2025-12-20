@@ -1,5 +1,5 @@
-setuptools
-wheel
+setuptools==65.5.1
+wheel==0.38.4
 numpy
 dm-env
 gym>=0.26
