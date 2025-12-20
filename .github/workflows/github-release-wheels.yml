@@ -59,10 +59,19 @@ jobs:
         run: |
           set -euo
           pip3 install dist/*.whl --force-reinstall
+          # Avoid importing the local repo copy of `envpool` (cwd is on sys.path).
+          cd /tmp
           python3 -c "import envpool; print(envpool.__version__); print(envpool.__file__)"
           python3 - <<'PY'
+          import os
+          os.chdir("/tmp")
           import numpy as np
           import envpool
+          from envpool.registration import list_all_envs
+
+          envs = list_all_envs()
+          print("num envs", len(envs))
+          assert len(envs) > 0, "envpool.list_all_envs() returned empty"
           env = envpool.make("CartPole-v1", env_type="gymnasium", num_envs=4)
           obs, info = env.reset()
           obs, rew, term, trunc, info = env.step(np.zeros(4, dtype=np.int32))
