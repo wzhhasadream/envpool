@@ -10,6 +10,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: trinkle23897/envpool-release:2023-01-02-5f1a5fd
+    env:
+      # Bazelisk defaults to the latest Bazel, which may require a newer glibc
+      # than the 2023-era release container provides. Pin to an older Bazel that
+      # runs on older glibc.
+      USE_BAZEL_VERSION: "5.4.1"
     strategy:
       fail-fast: false
       matrix:
