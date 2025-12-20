@@ -55,10 +55,16 @@ class GymnasiumEnvPoolMeta(ABCMeta, gymnasium.Env.__class__):
       parents = (
         base, GymnasiumEnvPoolMixin, EnvPoolMixin, XlaMixin, gymnasium.Env
       )
-    except ImportError:
+    except Exception as exc:
+      err_msg = (
+        "XLA is disabled due to an import-time error. "
+        "This often happens when envpool's XLA interface is incompatible "
+        "with your installed JAX version. "
+        f"Original error: {type(exc).__name__}: {exc}"
+      )
 
-      def _xla(self: Any) -> None:
-        raise RuntimeError("XLA is disabled. To enable XLA please install jax.")
+      def _xla(self: Any, _err_msg: str = err_msg) -> None:
+        raise RuntimeError(_err_msg)
 
       attrs["xla"] = _xla
       parents = (base, GymnasiumEnvPoolMixin, EnvPoolMixin, gymnasium.Env)
