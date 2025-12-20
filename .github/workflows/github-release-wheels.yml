@@ -19,10 +19,11 @@ jobs:
       # The release container is based on an older glibc and cannot run Node20-based
       # GitHub Actions (checkout/upload-artifact/etc). Use plain git+curl commands.
       - name: Checkout (no actions/checkout)
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
+          set -euo
           rm -rf .git
           git init .
           git remote add origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
@@ -32,23 +33,26 @@ jobs:
           git rev-parse HEAD
 
       - name: Set up Python ${{ matrix.python-version }}
+        shell: bash
         run: |
-          set -euo pipefail
+          set -euo
           ln -sf /root/.cache $HOME/.cache
           ln -sf /root/.pyenv $HOME/.pyenv
           pyenv global ${{ matrix.python-version }}-dev
           python3 --version
 
       - name: Build wheel (manylinux)
+        shell: bash
         run: |
-          set -euo pipefail
+          set -euo
           make pypi-wheel
           ls -la wheelhouse/ || true
           ls -la dist/ || true
 
       - name: Smoke test
+        shell: bash
         run: |
-          set -euo pipefail
+          set -euo
           pip3 install dist/*.whl --force-reinstall
           python3 -c "import envpool; print(envpool.__version__); print(envpool.__file__)"
           python3 - <<'PY'
@@ -61,12 +65,38 @@ jobs:
           PY
 
       - name: Upload wheels to GitHub Release (no upload-artifact)
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
+          set -euo
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
-          upload_url="$(curl -fsSL -H \"Authorization: Bearer ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" \"$api\" | python3 -c \"import json,sys; print(json.load(sys.stdin)['upload_url'].split('{')[0])\")"
+
+          # Ensure the GitHub Release exists (tags don't create releases automatically).
+          status="$(curl -sS -o /tmp/release.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$api" || true)"
+
+          if [ "$status" = "404" ]; then
+            echo "Release ${GITHUB_REF_NAME} does not exist yet; creating it."
+            curl -sS -o /tmp/release-create.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"${GITHUB_REF_NAME}\",\"name\":\"${GITHUB_REF_NAME}\",\"draft\":false,\"prerelease\":false}" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" | cat
+            curl -sS -o /tmp/release.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "$api" >/dev/null
+          elif [ "$status" != "200" ]; then
+            echo "Unexpected status when querying release: $status"
+            cat /tmp/release.json || true
+            exit 1
+          fi
+
+          upload_url="$(python3 -c "import json; print(json.load(open('/tmp/release.json'))['upload_url'].split('{')[0])")"
           echo "upload_url=$upload_url"
           for whl in wheelhouse/*.whl; do
             name="$(basename \"$whl\")"
@@ -77,4 +107,3 @@ jobs:
               --data-binary @"$whl" \
               "${upload_url}?name=${name}"
           done
-
