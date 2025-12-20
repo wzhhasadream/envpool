@@ -15,7 +15,9 @@ jobs:
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11"]
     steps:
-      - uses: actions/checkout@v4
+      # NOTE: the release container is based on an older glibc and cannot run
+      # Node 20-based actions. Use v3 actions which still run on Node 16.
+      - uses: actions/checkout@v3
 
       - name: Set up Python ${{ matrix.python-version }}
         run: |
@@ -42,7 +44,7 @@ jobs:
           PY
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: wheels-py${{ matrix.python-version }}
           path: wheelhouse/*.whl
@@ -54,10 +56,9 @@ jobs:
     needs: [build]
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           path: dist
-          merge-multiple: true
 
       - name: List artifacts
         run: |
