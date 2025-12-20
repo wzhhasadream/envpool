@@ -2,9 +2,6 @@ name: Release PyPI Wheel
 
 # on: [push, pull_request]
 on:
-  push:
-    tags:
-      - v*
   workflow_dispatch:
 
 jobs:

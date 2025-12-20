@@ -14,25 +14,42 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11"]
+
     steps:
-      # NOTE: the release container is based on an older glibc and cannot run
-      # Node 20-based actions. Use v3 actions which still run on Node 16.
-      - uses: actions/checkout@v3
+      # The release container is based on an older glibc and cannot run Node20-based
+      # GitHub Actions (checkout/upload-artifact/etc). Use plain git+curl commands.
+      - name: Checkout (no actions/checkout)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rm -rf .git
+          git init .
+          git remote add origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git fetch --depth 1 origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git checkout -q "tags/${GITHUB_REF_NAME}"
+          git submodule update --init --recursive || true
+          git rev-parse HEAD
 
       - name: Set up Python ${{ matrix.python-version }}
         run: |
+          set -euo pipefail
           ln -sf /root/.cache $HOME/.cache
           ln -sf /root/.pyenv $HOME/.pyenv
           pyenv global ${{ matrix.python-version }}-dev
+          python3 --version
 
       - name: Build wheel (manylinux)
         run: |
+          set -euo pipefail
           make pypi-wheel
           ls -la wheelhouse/ || true
-          pip3 install dist/*.whl --force-reinstall
+          ls -la dist/ || true
 
       - name: Smoke test
         run: |
+          set -euo pipefail
+          pip3 install dist/*.whl --force-reinstall
           python3 -c "import envpool; print(envpool.__version__); print(envpool.__file__)"
           python3 - <<'PY'
           import numpy as np
@@ -43,28 +60,21 @@ jobs:
           print("ok", obs.shape, rew.shape)
           PY
 
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: wheels-py${{ matrix.python-version }}
-          path: wheelhouse/*.whl
-          if-no-files-found: error
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    needs: [build]
-    steps:
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: dist
-
-      - name: List artifacts
+      - name: Upload wheels to GitHub Release (no upload-artifact)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ls -la dist
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
+          upload_url="$(curl -fsSL -H \"Authorization: Bearer ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" \"$api\" | python3 -c \"import json,sys; print(json.load(sys.stdin)['upload_url'].split('{')[0])\")"
+          echo "upload_url=$upload_url"
+          for whl in wheelhouse/*.whl; do
+            name="$(basename \"$whl\")"
+            echo "Uploading $name"
+            curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$whl" \
+              "${upload_url}?name=${name}"
+          done
 
-      - name: Publish GitHub Release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.whl
