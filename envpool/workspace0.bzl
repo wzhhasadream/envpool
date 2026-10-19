@@ -17,120 +17,184 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("//third_party/cuda:cuda.bzl", "cuda_configure")
+load("//third_party/freedoom:defs.bzl", "freedoom_archive")
+load("//third_party/gfootball:repo.bzl", "gfootball_archive")
+load("//third_party/vizdoom:repo.bzl", "vizdoom_archive")
 
 def workspace():
     """Load requested packages."""
-    # we cannot upgrade rules_python because it requires requirements_lock.txt after 0.13.0
+
+    maybe(
+        http_archive,
+        name = "rules_shell",
+        patches = [
+            "//third_party/rules_shell:bazel_sh_environ.patch",
+        ],
+        sha256 = "410e8ff32e018b9efd2743507e7595c26e2628567c42224411ff533b57d27c28",
+        strip_prefix = "rules_shell-0.2.0",
+        urls = [
+            "https://github.com/bazelbuild/rules_shell/releases/download/v0.2.0/rules_shell-v0.2.0.tar.gz",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "rules_cc",
+        patches = [
+            "//third_party/rules_cc:rules_shell_bazel_sh.patch",
+        ],
+        sha256 = "283fa1cdaaf172337898749cf4b9b1ef5ea269da59540954e51fba0e7b8f277a",
+        strip_prefix = "rules_cc-0.2.17",
+        urls = [
+            "https://github.com/bazelbuild/rules_cc/releases/download/0.2.17/rules_cc-0.2.17.tar.gz",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "rules_java",
+        sha256 = "9de4e178c2c4f98d32aafe5194c3f2b717ae10405caa11bdcb460ac2a6f61516",
+        urls = [
+            "https://github.com/bazelbuild/rules_java/releases/download/9.6.1/rules_java-9.6.1.tar.gz",
+        ],
+    )
+
+    # Keep both repo names while this WORKSPACE still mixes legacy rules_python
+    # and newer rules_cc/rules_java consumers.
+    maybe(
+        http_archive,
+        name = "protobuf",
+        sha256 = "9f0933ad12abb0a8957b3b64aefc34774ccbe57f77f890c66cb4067519bb83c1",
+        strip_prefix = "protobuf-34.1",
+        urls = [
+            "https://github.com/protocolbuffers/protobuf/releases/download/v34.1/protobuf-34.1.bazel.tar.gz",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "com_google_protobuf",
+        sha256 = "9f0933ad12abb0a8957b3b64aefc34774ccbe57f77f890c66cb4067519bb83c1",
+        strip_prefix = "protobuf-34.1",
+        urls = [
+            "https://github.com/protocolbuffers/protobuf/releases/download/v34.1/protobuf-34.1.bazel.tar.gz",
+        ],
+    )
+
     maybe(
         http_archive,
         name = "rules_python",
-        sha256 = "b593d13bb43c94ce94b483c2858e53a9b811f6f10e1e0eedc61073bd90e58d9c",
-        strip_prefix = "rules_python-0.12.0",
+        patches = [
+            "//third_party/rules_python:zipapp_explicit_init.patch",
+        ],
+        sha256 = "2f5c284fbb4e86045c2632d3573fc006facbca5d1fa02976e89dc0cd5488b590",
+        strip_prefix = "rules_python-1.6.3",
         urls = [
-            "https://github.com/bazelbuild/rules_python/archive/refs/tags/0.12.0.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/bazelbuild/rules_python/0.12.0.tar.gz",
+            "https://github.com/bazelbuild/rules_python/releases/download/1.6.3/rules_python-1.6.3.tar.gz",
         ],
     )
 
     maybe(
         http_archive,
         name = "rules_foreign_cc",
-        sha256 = "476303bd0f1b04cc311fc258f1708a5f6ef82d3091e53fd1977fa20383425a6a",
-        strip_prefix = "rules_foreign_cc-0.10.1",
+        sha256 = "32759728913c376ba45b0116869b71b68b1c2ebf8f2bcf7b41222bc07b773d73",
+        strip_prefix = "rules_foreign_cc-0.15.1",
         urls = [
-            "https://github.com/bazelbuild/rules_foreign_cc/archive/0.10.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/bazelbuild/rules_foreign_cc/0.10.1.tar.gz",
+            "https://github.com/bazel-contrib/rules_foreign_cc/releases/download/0.15.1/rules_foreign_cc-0.15.1.tar.gz",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "bazel_features",
+        sha256 = "c26b4e69cf02fea24511a108d158188b9d8174426311aac59ce803a78d107648",
+        strip_prefix = "bazel_features-1.43.0",
+        urls = [
+            "https://github.com/bazel-contrib/bazel_features/releases/download/v1.43.0/bazel_features-v1.43.0.tar.gz",
         ],
     )
 
     maybe(
         http_archive,
         name = "pybind11_bazel",
-        sha256 = "2c466c9b3cca7852b47e0785003128984fcf0d5d61a1a2e4c5aceefd935ac220",
-        strip_prefix = "pybind11_bazel-2.11.1",
+        patches = [
+            "//third_party/pybind11_bazel:build_defs_rules_cc_defs.patch",
+            "//third_party/pybind11_bazel:pybind11_build_rules_cc_defs.patch",
+        ],
+        sha256 = "4a8983811b562a02ef9ccc545c93dc275e23054ac8996170b8975fa387afa890",
+        strip_prefix = "pybind11_bazel-3.0.1",
+        type = "tar.gz",
         urls = [
-            "https://github.com/pybind/pybind11_bazel/archive/refs/tags/v2.11.1.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/pybind/pybind11_bazel/v2.11.1.zip",
+            "https://codeload.github.com/pybind/pybind11_bazel/tar.gz/refs/tags/v3.0.1",
         ],
     )
 
     maybe(
         http_archive,
         name = "pybind11",
-        build_file = "@pybind11_bazel//:pybind11.BUILD",
-        sha256 = "d475978da0cdc2d43b73f30910786759d593a9d8ee05b1b6846d1eb16c6d2e0c",
-        strip_prefix = "pybind11-2.11.1",
+        build_file = "@pybind11_bazel//:pybind11-BUILD.bazel",
+        sha256 = "2f20a0af0b921815e0e169ea7fec63909869323581b89d7de1553468553f6a2d",
+        strip_prefix = "pybind11-3.0.2",
+        type = "tar.gz",
         urls = [
-            "https://github.com/pybind/pybind11/archive/refs/tags/v2.11.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/pybind/pybind11/v2.11.1.tar.gz",
+            "https://codeload.github.com/pybind/pybind11/tar.gz/refs/tags/v3.0.2",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "openxla_ffi_headers",
+        build_file = "//third_party/openxla_ffi:ffi_api.BUILD",
+        sha256 = "753df38eab0d430da20e614316401663bcfca433905b976745a6e59998635ce8",
+        strip_prefix = "xla-187a5eb58277a85847d1516bd1e20b7faf03d5ef/xla/ffi/api",
+        type = "tar.gz",
+        urls = [
+            "https://codeload.github.com/openxla/xla/tar.gz/187a5eb58277a85847d1516bd1e20b7faf03d5ef",
+            "https://github.com/openxla/xla/archive/187a5eb58277a85847d1516bd1e20b7faf03d5ef.tar.gz",
         ],
     )
 
     maybe(
         http_archive,
         name = "com_google_absl",
-        sha256 = "497ebdc3a4885d9209b9bd416e8c3f71e7a1fb8af249f6c2a80b7cbeefcd7e21",
-        strip_prefix = "abseil-cpp-20230802.1",
+        sha256 = "05597c3c532197690a31ebad50a7c9c3fb682d3c5a681b20eb03655ffb4e9483",
+        strip_prefix = "abseil-cpp-20260107.1",
         urls = [
-            "https://github.com/abseil/abseil-cpp/archive/refs/tags/20230802.1.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/abseil/abseil-cpp/20230802.1.zip",
+            "https://github.com/abseil/abseil-cpp/archive/refs/tags/20260107.1.zip",
         ],
     )
 
     maybe(
         http_archive,
         name = "com_github_gflags_gflags",
-        sha256 = "34af2f15cf7367513b352bdcd2493ab14ce43692d2dcd9dfc499492966c64dcf",
-        strip_prefix = "gflags-2.2.2",
+        sha256 = "f619a51371f41c0ad6837b2a98af9d4643b3371015d873887f7e8d3237320b2f",
+        strip_prefix = "gflags-2.3.0",
         urls = [
-            "https://github.com/gflags/gflags/archive/v2.2.2.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/gflags/gflags/v2.2.2.tar.gz",
+            "https://github.com/gflags/gflags/archive/v2.3.0.tar.gz",
+        ],
+        patches = [
+            "//third_party/gflags:rules_cc_defs.patch",
         ],
     )
 
     maybe(
         http_archive,
         name = "com_github_google_glog",
-        sha256 = "122fb6b712808ef43fbf80f75c52a21c9760683dae470154f02bddfc61135022",
-        strip_prefix = "glog-0.6.0",
+        sha256 = "c17d85c03ad9630006ef32c7be7c65656aba2e7e2fbfc82226b7e680c771fc88",
+        strip_prefix = "glog-0.7.1",
         urls = [
-            "https://github.com/google/glog/archive/v0.6.0.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/google/glog/v0.6.0.zip",
+            "https://github.com/google/glog/archive/v0.7.1.zip",
         ],
     )
 
     maybe(
         http_archive,
         name = "com_google_googletest",
-        sha256 = "8ad598c73ad796e0d8280b082cebd82a630d73e73cd3c70057938a6501bba5d7",
-        strip_prefix = "googletest-1.14.0",
+        sha256 = "65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c",
+        strip_prefix = "googletest-1.17.0",
         urls = [
-            "https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/google/googletest/v1.14.0.tar.gz",
+            "https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz",
         ],
-    )
-
-    maybe(
-        http_archive,
-        name = "com_justbuchanan_rules_qt",
-        sha256 = "6b42a58f062b3eea10ada5340cd8f63b47feb986d16794b0f8e0fde750838348",
-        strip_prefix = "bazel_rules_qt-3196fcf2e6ee81cf3a2e2b272af3d4259b84fcf9",
-        urls = [
-            "https://github.com/justbuchanan/bazel_rules_qt/archive/3196fcf2e6ee81cf3a2e2b272af3d4259b84fcf9.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/justbuchanan/bazel_rules_qt/3196fcf2e6ee81cf3a2e2b272af3d4259b84fcf9.tar.gz",
-        ],
-    )
-
-    maybe(
-        http_archive,
-        name = "glibc_version_header",
-        sha256 = "57db74f933b7a9ea5c653498640431ce0e52aaef190d6bb586711ec4f8aa2b9e",
-        strip_prefix = "glibc_version_header-0.1/version_headers/",
-        urls = [
-            "https://github.com/wheybags/glibc_version_header/archive/refs/tags/0.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/wheybags/glibc_version_header/0.1.tar.gz",
-        ],
-        build_file = "//third_party/glibc_version_header:glibc_version_header.BUILD",
     )
 
     maybe(
@@ -140,7 +204,6 @@ def workspace():
         strip_prefix = "concurrentqueue-1.0.4",
         urls = [
             "https://github.com/cameron314/concurrentqueue/archive/refs/tags/v1.0.4.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/cameron314/concurrentqueue/v1.0.4.tar.gz",
         ],
         build_file = "//third_party/concurrentqueue:concurrentqueue.BUILD",
     )
@@ -152,19 +215,21 @@ def workspace():
         strip_prefix = "ThreadPool-9a42ec1329f259a5f4881a291db1dcb8f2ad9040",
         urls = [
             "https://github.com/progschj/ThreadPool/archive/9a42ec1329f259a5f4881a291db1dcb8f2ad9040.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/progschj/ThreadPool/9a42ec1329f259a5f4881a291db1dcb8f2ad9040.zip",
+            "https://codeload.github.com/progschj/ThreadPool/zip/9a42ec1329f259a5f4881a291db1dcb8f2ad9040",
         ],
         build_file = "//third_party/threadpool:threadpool.BUILD",
+        patches = [
+            "//third_party/threadpool:invoke_result.patch",
+        ],
     )
 
     maybe(
         http_archive,
         name = "zlib",
-        sha256 = "ff0ba4c292013dbc27530b3a81e1f9a813cd39de01ca5e0f8bf355702efa593e",
-        strip_prefix = "zlib-1.3",
+        sha256 = "b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1",
+        strip_prefix = "zlib-1.3.2",
         urls = [
-            "https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/madler/zlib/zlib-1.3.tar.gz",
+            "https://github.com/madler/zlib/archive/refs/tags/v1.3.2.tar.gz",
         ],
         build_file = "//third_party/zlib:zlib.BUILD",
     )
@@ -172,11 +237,15 @@ def workspace():
     maybe(
         http_archive,
         name = "opencv",
-        sha256 = "62f650467a60a38794d681ae7e66e3e8cfba38f445e0bf87867e2f2cdc8be9d5",
-        strip_prefix = "opencv-4.8.1",
+        patch_args = ["-p1"],
+        patches = [
+            "//third_party/opencv:windows_msvc_flag_check.patch",
+            "//third_party/opencv:windows_cpu_baseline_flags.patch",
+        ],
+        sha256 = "1d40ca017ea51c533cf9fd5cbde5b5fe7ae248291ddf2af99d4c17cf8e13017d",
+        strip_prefix = "opencv-4.13.0",
         urls = [
-            "https://github.com/opencv/opencv/archive/refs/tags/4.8.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/opencv/opencv/4.8.1.tar.gz",
+            "https://github.com/opencv/opencv/archive/refs/tags/4.13.0.tar.gz",
         ],
         build_file = "//third_party/opencv:opencv.BUILD",
     )
@@ -184,11 +253,10 @@ def workspace():
     maybe(
         http_archive,
         name = "pugixml",
-        sha256 = "610f98375424b5614754a6f34a491adbddaaec074e9044577d965160ec103d2e",
-        strip_prefix = "pugixml-1.14/src",
+        sha256 = "b39647064d9e28297a34278bfb897092bf33b7c487906ddfc094c9e8868bddcb",
+        strip_prefix = "pugixml-1.15/src",
         urls = [
-            "https://github.com/zeux/pugixml/archive/refs/tags/v1.14.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/zeux/pugixml/v1.14.tar.gz",
+            "https://github.com/zeux/pugixml/archive/refs/tags/v1.15.tar.gz",
         ],
         build_file = "//third_party/pugixml:pugixml.BUILD",
     )
@@ -196,11 +264,12 @@ def workspace():
     maybe(
         http_archive,
         name = "ale",
-        sha256 = "28960616cd89c18925ced7bbdeec01ab0b2ebd2d8ce5b7c88930e97381b4c3b5",
-        strip_prefix = "Arcade-Learning-Environment-0.8.1",
+        # Official v0.11.2 commit; see third_party/ale/README.md.
+        sha256 = "9e4f0dbe8c73c382a208e49c7d071edd146f5456b2a6ba8edb71bac0c2d91f05",
+        strip_prefix = "Arcade-Learning-Environment-72a87826916aa0b696096c991faa982992ff80ec",
         urls = [
-            "https://github.com/mgbellemare/Arcade-Learning-Environment/archive/refs/tags/v0.8.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/mgbellemare/Arcade-Learning-Environment/v0.8.1.tar.gz",
+            "https://github.com/Farama-Foundation/Arcade-Learning-Environment/archive/72a87826916aa0b696096c991faa982992ff80ec.tar.gz",
+            "https://codeload.github.com/Farama-Foundation/Arcade-Learning-Environment/tar.gz/72a87826916aa0b696096c991faa982992ff80ec",
         ],
         build_file = "//third_party/ale:ale.BUILD",
     )
@@ -212,7 +281,6 @@ def workspace():
         urls = [
             "https://roms8.s3.us-east-2.amazonaws.com/Roms.tar.gz",
             "https://cdn.sail.sea.com/sail/Roms.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/atari/Roms.tar.gz",
         ],
         build_file = "//third_party/atari_roms:atari_roms.BUILD",
     )
@@ -220,11 +288,10 @@ def workspace():
     maybe(
         http_archive,
         name = "libjpeg_turbo",
-        sha256 = "b3090cd37b5a8b3e4dbd30a1311b3989a894e5d3c668f14cbc6739d77c9402b7",
-        strip_prefix = "libjpeg-turbo-2.0.5",
+        sha256 = "075920b826834ac4ddf97661cc73491047855859affd671d52079c6867c1c6c0",
+        strip_prefix = "libjpeg-turbo-3.1.3",
         urls = [
-            "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/2.0.5.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/libjpeg-turbo/libjpeg-turbo/2.0.5.tar.gz",
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz",
         ],
         build_file = "//third_party/jpeg:jpeg.BUILD",
     )
@@ -232,25 +299,93 @@ def workspace():
     maybe(
         http_archive,
         name = "nasm",
-        sha256 = "63ec86477ad3f0f6292325fd89e1d93aea2e2fd490070863f17d48f7cd387011",
-        strip_prefix = "nasm-2.13.03",
+        sha256 = "af2f241ecc061205d73ba4f781f075d025dabaeab020b676b7db144bf7015d6d",
+        strip_prefix = "nasm-nasm-3.01",
         urls = [
-            "https://www.nasm.us/pub/nasm/releasebuilds/2.13.03/nasm-2.13.03.tar.bz2",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/nasm/nasm-2.13.03.tar.bz2",
+            "https://github.com/netwide-assembler/nasm/archive/refs/tags/nasm-3.01.tar.gz",
         ],
+        patch_cmds = ["""
+set -eux
+perl -Iperllib -I. x86/preinsns.pl x86/insns.dat x86/insns.xda
+perl -Iperllib -I. x86/insns.pl -fc x86/insns.xda x86/iflag.c
+perl -Iperllib -I. x86/insns.pl -fh x86/insns.xda x86/iflaggen.h
+perl -Iperllib -I. x86/insns.pl -b x86/insns.xda x86/insnsb.c
+perl -Iperllib -I. x86/insns.pl -a x86/insns.xda x86/insnsa.c
+perl -Iperllib -I. x86/insns.pl -d x86/insns.xda x86/insnsd.c
+perl -Iperllib -I. x86/insns.pl -i x86/insns.xda x86/insnsi.h
+perl -Iperllib -I. x86/insns.pl -n x86/insns.xda x86/insnsn.c
+perl -Iperllib -I. version.pl h < version > version.h
+perl -Iperllib -I. version.pl mac < version > version.mac
+perl -Iperllib -I. x86/regs.pl c x86/regs.dat > x86/regs.c
+perl -Iperllib -I. x86/regs.pl fc x86/regs.dat > x86/regflags.c
+perl -Iperllib -I. x86/regs.pl dc x86/regs.dat > x86/regdis.c
+perl -Iperllib -I. x86/regs.pl dh x86/regs.dat > x86/regdis.h
+perl -Iperllib -I. x86/regs.pl vc x86/regs.dat > x86/regvals.c
+perl -Iperllib -I. x86/regs.pl h x86/regs.dat > x86/regs.h
+perl -Iperllib -I. asm/tokhash.pl c x86/insnsn.c x86/regs.dat asm/tokens.dat > asm/tokhash.c
+perl -Iperllib -I. asm/tokhash.pl h x86/insnsn.c x86/regs.dat asm/tokens.dat > asm/tokens.h
+perl -Iperllib -I. asm/pptok.pl h asm/pptok.dat asm/pptok.h
+perl -Iperllib -I. asm/pptok.pl c asm/pptok.dat asm/pptok.c
+perl -Iperllib -I. asm/pptok.pl ph asm/pptok.dat asm/pptok.ph
+perl -Iperllib -I. nasmlib/perfhash.pl h asm/directiv.dat asm/directiv.h
+perl -Iperllib -I. nasmlib/perfhash.pl c asm/directiv.dat asm/directbl.c
+perl -Iperllib -I. asm/warnings.pl c asm/warnings_c.h asm/warnings.dat
+perl -Iperllib -I. asm/warnings.pl h include/warnings.h asm/warnings.dat
+perl -Iperllib -I. macros/macros.pl version.mac 'macros/*.mac' 'output/*.mac'
+"""],
         build_file = "//third_party/nasm:nasm.BUILD",
     )
 
     maybe(
         http_archive,
         name = "sdl2",
-        sha256 = "888b8c39f36ae2035d023d1b14ab0191eb1d26403c3cf4d4d5ede30e66a4942c",
-        strip_prefix = "SDL2-2.28.4",
+        sha256 = "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165",
+        strip_prefix = "SDL2-2.32.10",
         urls = [
-            "https://www.libsdl.org/release/SDL2-2.28.4.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/libsdl/SDL2-2.28.4.tar.gz",
+            "https://www.libsdl.org/release/SDL2-2.32.10.tar.gz",
+            "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz",
+        ],
+        patches = [
+            "//third_party/sdl2:windows_xinput_stub.patch",
         ],
         build_file = "//third_party/sdl2:sdl2.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "freetype",
+        sha256 = "bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103",
+        strip_prefix = "freetype-VER-2-13-3",
+        type = "tar.gz",
+        urls = [
+            "https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz",
+            "https://codeload.github.com/freetype/freetype/tar.gz/refs/tags/VER-2-13-3",
+        ],
+        build_file = "//third_party/freetype:freetype.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "sdl2_ttf",
+        sha256 = "2c45241a56203a59d66ec6b4eae9457e5675fc609376566a257391fd29d341a2",
+        strip_prefix = "SDL_ttf-release-2.24.0",
+        type = "tar.gz",
+        urls = [
+            "https://github.com/libsdl-org/SDL_ttf/archive/refs/tags/release-2.24.0.tar.gz",
+        ],
+        build_file = "//third_party/sdl2_ttf:sdl2_ttf.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "sdl2_gfx",
+        sha256 = "358042f1e63ba1ef4d6484047998ab08c1ee72ab589826805bfbba8fd50abe8b",
+        strip_prefix = "SDL2_gfx-c4aca6b9700ec0db0abd316809e7e6038c511ce2",
+        type = "tar.gz",
+        urls = [
+            "https://codeload.github.com/ferzkopp/SDL2_gfx/tar.gz/c4aca6b9700ec0db0abd316809e7e6038c511ce2",
+        ],
+        build_file = "//third_party/sdl2_gfx:sdl2_gfx.BUILD",
     )
 
     maybe(
@@ -260,7 +395,15 @@ def workspace():
         strip_prefix = "rules_boost-e60cf50996da9fe769b6e7a31b88c54966ecb191",
         urls = [
             "https://github.com/nelhage/rules_boost/archive/e60cf50996da9fe769b6e7a31b88c54966ecb191.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/nelhage/rules_boost/e60cf50996da9fe769b6e7a31b88c54966ecb191.tar.gz",
+        ],
+        patches = [
+            "//third_party/boost:filesystem_scope_headers.patch",
+            "//third_party/boost:atomic_windows_build.patch",
+            "//third_party/boost:lzma_linux_x86_clmul.patch",
+            "//third_party/boost:lzma_windows_copts.patch",
+            "//third_party/boost:windows_common_defines.patch",
+            "//third_party/boost:bzip2_system_headers.patch",
+            "//third_party/boost:zlib_system_headers.patch",
         ],
     )
 
@@ -269,49 +412,71 @@ def workspace():
         name = "boost",
         build_file = "@com_github_nelhage_rules_boost//:boost.BUILD",
         patch_cmds = ["rm -f doc/pdf/BUILD"],
-        sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e",
-        strip_prefix = "boost_1_83_0",
+        sha256 = "e848446c6fec62d8a96b44ed7352238b3de040b8b9facd4d6963b32f541e00f5",
+        strip_prefix = "boost-1.90.0",
         urls = [
-            "https://boostorg.jfrog.io/artifactory/main/release/1.83.0/source/boost_1_83_0.tar.bz2",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/boost/boost_1_83_0.tar.bz2",
+            "https://github.com/boostorg/boost/releases/download/boost-1.90.0/boost-1.90.0-b2-nodocs.tar.gz",
         ],
     )
 
     maybe(
-        http_archive,
+        freedoom_archive,
         name = "freedoom",
+        attempts = 8,
+        build_file = "//third_party/freedoom:freedoom.BUILD",
         sha256 = "f42c6810fc89b0282de1466c2c9c7c9818031a8d556256a6db1b69f6a77b5806",
         strip_prefix = "freedoom-0.12.1/",
+        type = "zip",
         urls = [
             "https://github.com/freedoom/freedoom/releases/download/v0.12.1/freedoom-0.12.1.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/freedoom/freedoom/freedoom-0.12.1.zip",
         ],
-        build_file = "//third_party/freedoom:freedoom.BUILD",
     )
 
     maybe(
         http_archive,
-        name = "vizdoom",
-        sha256 = "e379a242ada7e1028b7a635da672b0936d99da3702781b76a4400b83602d78c4",
-        strip_prefix = "ViZDoom-1.1.13/src/vizdoom/",
+        name = "re2c_4_5_1",
+        build_file = "//third_party/re2c:re2c.BUILD",
+        sha256 = "ffea067c11aa668bcb42885be6e6cd000302000b7747d2bb213299ec66b7864e",
+        strip_prefix = "re2c-4.5.1",
         urls = [
-            "https://github.com/Farama-Foundation/ViZDoom/archive/refs/tags/1.1.13.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/Farama-Foundation/ViZDoom/1.1.13.tar.gz",
+            "https://github.com/skvadrik/re2c/releases/download/4.5.1/re2c-4.5.1.tar.xz",
+        ],
+    )
+
+    maybe(
+        vizdoom_archive,
+        name = "vizdoom",
+        patch_args = [
+            "-p0",
+            "-l",
+        ],
+        patch_tool = "patch",
+        sha256 = "76ddf186d7f093ef85cbcb0e7e387757d60e45190eb5da6d075aab31ffc316ed",
+        strip_prefix = "ViZDoom-1.3.0/src/vizdoom/",
+        urls = [
+            "https://github.com/Farama-Foundation/ViZDoom/archive/refs/tags/1.3.0.tar.gz",
         ],
         build_file = "//third_party/vizdoom:vizdoom.BUILD",
         patches = [
             "//third_party/vizdoom:sdl_thread.patch",
+            "//third_party/vizdoom:windows_msvc_compat.patch",
         ],
     )
 
     maybe(
         http_archive,
         name = "vizdoom_lib",
-        sha256 = "e379a242ada7e1028b7a635da672b0936d99da3702781b76a4400b83602d78c4",
-        strip_prefix = "ViZDoom-1.1.13/",
+        patch_args = [
+            "-p0",
+            "-l",
+        ],
+        patches = [
+            "//third_party/vizdoom_lib:windows_create_process.patch",
+        ],
+        sha256 = "76ddf186d7f093ef85cbcb0e7e387757d60e45190eb5da6d075aab31ffc316ed",
+        strip_prefix = "ViZDoom-1.3.0/",
         urls = [
-            "https://github.com/Farama-Foundation/ViZDoom/archive/refs/tags/1.1.13.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/Farama-Foundation/ViZDoom/1.1.13.tar.gz",
+            "https://github.com/Farama-Foundation/ViZDoom/archive/refs/tags/1.3.0.tar.gz",
         ],
         build_file = "//third_party/vizdoom_lib:vizdoom_lib.BUILD",
     )
@@ -323,19 +488,90 @@ def workspace():
         strip_prefix = "DirectFuturePrediction-b4757769f167f1bd7fb1ece5fdc6d874409c68a9/",
         urls = [
             "https://github.com/isl-org/DirectFuturePrediction/archive/b4757769f167f1bd7fb1ece5fdc6d874409c68a9.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/isl-org/DirectFuturePrediction/b4757769f167f1bd7fb1ece5fdc6d874409c68a9.zip",
         ],
         build_file = "//third_party/vizdoom_extra_maps:vizdoom_extra_maps.BUILD",
     )
 
     maybe(
         http_archive,
-        name = "mujoco",
-        sha256 = "d1cb3a720546240d894cd315b7fd358a2b96013a1f59b6d718036eca6f6edac2",
-        strip_prefix = "mujoco-2.2.1",
+        name = "tinyxml2",
+        sha256 = "ab1a6700074ab4d468e46535545bb33aa4a74d794ab514fac64cc297fc7a2545",
+        strip_prefix = "tinyxml2-e6caeae85799003f4ca74ff26ee16a789bc2af48",
         urls = [
-            "https://github.com/deepmind/mujoco/releases/download/2.2.1/mujoco-2.2.1-linux-x86_64.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/deepmind/mujoco/mujoco-2.2.1-linux-x86_64.tar.gz",
+            "https://github.com/leethomason/tinyxml2/archive/e6caeae85799003f4ca74ff26ee16a789bc2af48.tar.gz",
+        ],
+        build_file = "//third_party/tinyxml2:tinyxml2.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "lodepng",
+        sha256 = "83d828c5478ffe7bad0e8ed80678ef826206becbd8cf70097b6cc4d29549389b",
+        strip_prefix = "lodepng-17d08dd26cac4d63f43af217ebd70318bfb8189c",
+        urls = [
+            "https://github.com/lvandeve/lodepng/archive/17d08dd26cac4d63f43af217ebd70318bfb8189c.tar.gz",
+        ],
+        build_file = "//third_party/lodepng:lodepng.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "tinyobjloader",
+        sha256 = "e334b2900380efdc19a0ea42e5e966a6a6a04831dd830dd42a80e28ce6d1e9be",
+        strip_prefix = "tinyobjloader-1421a10d6ed9742f5b2c1766d22faa6cfbc56248",
+        urls = [
+            "https://github.com/tinyobjloader/tinyobjloader/archive/1421a10d6ed9742f5b2c1766d22faa6cfbc56248.tar.gz",
+        ],
+        build_file = "//third_party/tinyobjloader:tinyobjloader.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "marchingcubecpp",
+        sha256 = "227c10b2cffe886454b92a0e9ef9f0c9e8e001d00ea156cc37c8fc43055c9ca6",
+        strip_prefix = "MarchingCubeCpp-f03a1b3ec29b1d7d865691ca8aea4f1eb2c2873d",
+        urls = [
+            "https://github.com/aparis69/MarchingCubeCpp/archive/f03a1b3ec29b1d7d865691ca8aea4f1eb2c2873d.tar.gz",
+        ],
+        build_file = "//third_party/marchingcubecpp:marchingcubecpp.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "ccd",
+        sha256 = "479994a86d32e2effcaad64204142000ee6b6b291fd1859ac6710aee8d00a482",
+        strip_prefix = "libccd-7931e764a19ef6b21b443376c699bbc9c6d4fba8",
+        urls = [
+            "https://github.com/danfis/libccd/archive/7931e764a19ef6b21b443376c699bbc9c6d4fba8.tar.gz",
+        ],
+        build_file = "//third_party/ccd:ccd.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "qhull",
+        sha256 = "78029ba5d4276fab14df5ef54dd8b72a3c835ef400db022373b3488999bb6c38",
+        strip_prefix = "qhull-62ccc56af071eaa478bef6ed41fd7a55d3bb2d80",
+        urls = [
+            "https://github.com/qhull/qhull/archive/62ccc56af071eaa478bef6ed41fd7a55d3bb2d80.tar.gz",
+        ],
+        build_file = "//third_party/qhull:qhull.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "mujoco",
+        patch_args = ["-p1"],
+        patches = [
+            "//third_party/mujoco:idempotent_obj_decoder.patch",
+            "//third_party/mujoco:idempotent_stl_decoder.patch",
+            "//third_party/mujoco:windows_msvc_compat.patch",
+            "//third_party/mujoco:windows_msvc_c11_compat.patch",
+        ],
+        sha256 = "0d6bb25612da5d1c398d21cf5b039367d4deef15c064b049c3127043d613b539",
+        strip_prefix = "mujoco-3.6.0",
+        urls = [
+            "https://github.com/google-deepmind/mujoco/archive/refs/tags/3.6.0.tar.gz",
         ],
         build_file = "//third_party/mujoco:mujoco.BUILD",
     )
@@ -347,7 +583,6 @@ def workspace():
         strip_prefix = "gym-0.26.2/gym/envs/mujoco",
         urls = [
             "https://github.com/openai/gym/archive/refs/tags/0.26.2.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/openai/gym/0.26.2.tar.gz",
         ],
         build_file = "//third_party/mujoco_gym_xml:mujoco_gym_xml.BUILD",
     )
@@ -355,25 +590,169 @@ def workspace():
     maybe(
         http_archive,
         name = "mujoco_dmc_xml",
-        sha256 = "fb8d57cbeb92bebe56a992dab8401bc00b3bff61b62526eb563854adf3dfb595",
-        strip_prefix = "dm_control-1.0.9/dm_control",
+        sha256 = "23e86e28ef6ba9d2fec95103d45bd2061cfed35c8b0012b1ac5ee41b080d56c6",
+        strip_prefix = "dm_control-1.0.38/dm_control",
         urls = [
-            "https://github.com/deepmind/dm_control/archive/refs/tags/1.0.9.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/deepmind/dm_control/1.0.9.tar.gz",
+            "https://github.com/deepmind/dm_control/archive/refs/tags/1.0.38.tar.gz",
+            "https://codeload.github.com/deepmind/dm_control/tar.gz/refs/tags/1.0.38",
         ],
         build_file = "//third_party/mujoco_dmc_xml:mujoco_dmc_xml.BUILD",
     )
 
     maybe(
         http_archive,
-        name = "box2d",
-        sha256 = "d6b4650ff897ee1ead27cf77a5933ea197cbeef6705638dd181adc2e816b23c2",
-        strip_prefix = "box2d-2.4.1",
+        name = "gymnasium_robotics_assets",
+        # Official v1.4.2 commit; see third_party/gymnasium_robotics_assets/README.md.
+        sha256 = "3c675a90d800b7f1a48710051f106d6c4019f06d859aa928a5cd82e8be141890",
+        strip_prefix = "Gymnasium-Robotics-42eae53b2b27321d29090c219ce2f675c596de77/gymnasium_robotics/envs",
         urls = [
-            "https://github.com/erincatto/box2d/archive/refs/tags/v2.4.1.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/erincatto/box2d/v2.4.1.tar.gz",
+            "https://github.com/Farama-Foundation/Gymnasium-Robotics/archive/42eae53b2b27321d29090c219ce2f675c596de77.tar.gz",
+            "https://codeload.github.com/Farama-Foundation/Gymnasium-Robotics/tar.gz/42eae53b2b27321d29090c219ce2f675c596de77",
+        ],
+        build_file = "//third_party/gymnasium_robotics_assets:gymnasium_robotics_assets.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "metaworld_assets",
+        sha256 = "6ccb763cb05bb9f9c966a17304d4849f530f1b721699fecc68d920a000ea5bd0",
+        strip_prefix = "Metaworld-3.0.0",
+        urls = [
+            "https://github.com/Farama-Foundation/Metaworld/archive/refs/tags/v3.0.0.tar.gz",
+            "https://codeload.github.com/Farama-Foundation/Metaworld/tar.gz/refs/tags/v3.0.0",
+        ],
+        build_file = "//third_party/metaworld_assets:metaworld_assets.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_source",
+        sha256 = "f75b77563547fce6d9be46abee2b86e636dd5e57a6f1d470fdbc2104dcd61d34",
+        strip_prefix = "myosuite-2.11.6",
+        urls = [
+            "https://github.com/MyoHub/myosuite/archive/refs/tags/v2.11.6.tar.gz",
+            "https://codeload.github.com/MyoHub/myosuite/tar.gz/refs/tags/v2.11.6",
+        ],
+        patch_args = ["-p1"],
+        patches = ["//third_party/myosuite:mujoco36_mjspec_compat.patch"],
+        build_file = "//third_party/myosuite:myosuite_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_myo_sim",
+        sha256 = "bd8fdf313b46dbefcd25bf42cf8ddcc45066798164bb3551a990690cad514ebd",
+        strip_prefix = "myo_sim-33f3ded946f55adbdcf963c99999587aadaf975f",
+        urls = [
+            "https://github.com/MyoHub/myo_sim/archive/33f3ded946f55adbdcf963c99999587aadaf975f.tar.gz",
+            "https://codeload.github.com/MyoHub/myo_sim/tar.gz/33f3ded946f55adbdcf963c99999587aadaf975f",
+        ],
+        build_file = "//third_party/myosuite:simhive_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_object_sim",
+        sha256 = "beed226fcf1d27b91f9147221ef450c2ccab8e5bb7b5954dbcb5635024ed4874",
+        strip_prefix = "object_sim-0.1.0",
+        urls = [
+            # MyoSuite v2.11.6 gitlinks vikashplus/object_sim@87cd8dd, but
+            # that commit is no longer fetchable from GitHub archives.
+            "https://github.com/MyoHub/object_sim/archive/refs/tags/v0.1.0.tar.gz",
+            "https://codeload.github.com/MyoHub/object_sim/tar.gz/refs/tags/v0.1.0",
+        ],
+        build_file = "//third_party/myosuite:simhive_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_mpl_sim",
+        sha256 = "591fce117832c789e227499ea45c601a9ca142c7dd636492f8bbcd825d54ea0a",
+        strip_prefix = "MPL_sim-58dd1abc6058e0dc06e62f13a61c36adb4916815",
+        urls = [
+            "https://github.com/vikashplus/MPL_sim/archive/58dd1abc6058e0dc06e62f13a61c36adb4916815.tar.gz",
+            "https://codeload.github.com/vikashplus/MPL_sim/tar.gz/58dd1abc6058e0dc06e62f13a61c36adb4916815",
+        ],
+        build_file = "//third_party/myosuite:simhive_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_ycb_sim",
+        sha256 = "81caf29e5b5c01b4af56991731b3f731a95d486addccafaaaedc7600a9f2437e",
+        strip_prefix = "YCB_sim-46edd9c361061c5d81a82f2511d4fbf76fead569",
+        urls = [
+            "https://github.com/vikashplus/YCB_sim/archive/46edd9c361061c5d81a82f2511d4fbf76fead569.tar.gz",
+            "https://codeload.github.com/vikashplus/YCB_sim/tar.gz/46edd9c361061c5d81a82f2511d4fbf76fead569",
+        ],
+        build_file = "//third_party/myosuite:simhive_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "myosuite_furniture_sim",
+        sha256 = "5fb42ed8c932f7c820a72fbb86ea736957476020bdf008e17277380c3693ce9e",
+        strip_prefix = "furniture_sim-c97995afb81c9e2d7325b0069f9abc9a2c74a2f0",
+        urls = [
+            "https://github.com/vikashplus/furniture_sim/archive/c97995afb81c9e2d7325b0069f9abc9a2c74a2f0.tar.gz",
+            "https://codeload.github.com/vikashplus/furniture_sim/tar.gz/c97995afb81c9e2d7325b0069f9abc9a2c74a2f0",
+        ],
+        build_file = "//third_party/myosuite:simhive_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "mujoco_playground_source",
+        patch_args = ["-p1"],
+        patches = [
+            "//third_party/mujoco_playground:aero_hand_asset_paths.patch",
+            "//third_party/mujoco_playground:aloha_asset_paths.patch",
+            "//third_party/mujoco_playground:apollo_mesh_paths.patch",
+            "//third_party/mujoco_playground:go1_mesh_paths.patch",
+            "//third_party/mujoco_playground:h1_mesh_paths.patch",
+            "//third_party/mujoco_playground:op3_mesh_paths.patch",
+            "//third_party/mujoco_playground:oracle_imports.patch",
+            "//third_party/mujoco_playground:panda_include_paths.patch",
+            "//third_party/mujoco_playground:panda_robotiq_asset_paths.patch",
+            "//third_party/mujoco_playground:t1_mesh_paths.patch",
+        ],
+        sha256 = "6348dee222e52318098dc425ff9708af46e0b6d4d0a17c44336a1e4f53c90f04",
+        strip_prefix = "mujoco_playground-0.2.0",
+        urls = [
+            "https://github.com/google-deepmind/mujoco_playground/archive/refs/tags/v0.2.0.tar.gz",
+            "https://codeload.github.com/google-deepmind/mujoco_playground/tar.gz/refs/tags/v0.2.0",
+        ],
+        build_file = "//third_party/mujoco_playground:mujoco_playground_source.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "mujoco_menagerie_playground",
+        patch_args = ["-p1"],
+        patches = [
+            "//third_party/mujoco_playground:panda_menagerie_mesh_paths.patch",
+        ],
+        sha256 = "376e2d66b31e0cf3adfc91d9aba5e36b9093c542ee8f8ddb1801c41d74cc689d",
+        strip_prefix = "mujoco_menagerie-1b86ece576591213e2b666ebf59508454200ca97",
+        urls = [
+            "https://github.com/google-deepmind/mujoco_menagerie/archive/1b86ece576591213e2b666ebf59508454200ca97.tar.gz",
+            "https://codeload.github.com/google-deepmind/mujoco_menagerie/tar.gz/1b86ece576591213e2b666ebf59508454200ca97",
+        ],
+        build_file = "//third_party/mujoco_playground:mujoco_menagerie.BUILD",
+    )
+
+    maybe(
+        http_archive,
+        name = "box2d",
+        sha256 = "5471722f290b7285dcbdee9bef61d1cb424e5a610fa6e19e9ddeb854c7e3b937",
+        strip_prefix = "pybox2d-2.3.10",
+        urls = [
+            "https://github.com/pybox2d/pybox2d/archive/refs/tags/2.3.10.tar.gz",
         ],
         build_file = "//third_party/box2d:box2d.BUILD",
+        patch_cmds = [
+            "sed -i.bak 's/^#define USE_EXCEPTIONS$/\\/\\/ #define USE_EXCEPTIONS/' Box2D/Common/b2Settings.h",
+        ],
     )
 
     # Atari/VizDoom pretrained weight for testing pipeline
@@ -384,7 +763,6 @@ def workspace():
         sha256 = "b1b64e0db84cf7317c2a96b27f549147dfcb4074ed2d799334c23a067075ac1c",
         urls = [
             "https://cdn.sail.sea.com/sail/pretrain.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/pretrain.tar.gz",
         ],
         build_file = "//third_party/pretrain_weight:pretrain_weight.BUILD",
     )
@@ -392,13 +770,15 @@ def workspace():
     maybe(
         http_archive,
         name = "procgen",
-        sha256 = "d5620394418b885f9028f98759189a5f78bc4ba71fb6605f910ae22fca870c8e",
-        strip_prefix = "procgen-0.10.8/procgen",
+        sha256 = "22940ad0f1fdb4ad1eab3303ce23d3a0ea536700bb1d7c299bee64dbc7c57e9b",
+        strip_prefix = "procgen-0.10.7/procgen",
         urls = [
-            "https://github.com/Trinkle23897/procgen/archive/refs/tags/0.10.8.tar.gz",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/Trinkle23897/procgen/0.10.8.tar.gz",
+            "https://github.com/openai/procgen/archive/refs/tags/0.10.7.tar.gz",
         ],
         build_file = "//third_party/procgen:procgen.BUILD",
+        patches = [
+            "//third_party/procgen:envpool.patch",
+        ],
     )
 
     maybe(
@@ -408,19 +788,31 @@ def workspace():
         strip_prefix = "gym3-4c3824680eaf9dd04dce224ee3d4856429878226/gym3",
         urls = [
             "https://github.com/openai/gym3/archive/4c3824680eaf9dd04dce224ee3d4856429878226.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/openai/gym3/4c3824680eaf9dd04dce224ee3d4856429878226.zip",
         ],
         build_file = "//third_party/gym3_libenv:gym3_libenv.BUILD",
     )
 
     maybe(
+        gfootball_archive,
+        name = "google_research_football",
+        sha256 = "458100b893aaa530fa269a8ac17484e6f05812e266c81712834dfefc7ecd196b",
+        strip_prefix = "football-3d9e754720a95621bba6475c4d3b0d56fe919014",
+        type = "tar.gz",
+        urls = [
+            "https://codeload.github.com/google-research/football/tar.gz/3d9e754720a95621bba6475c4d3b0d56fe919014",
+        ],
+        build_file = "//third_party/gfootball:gfootball.BUILD",
+        patch_args = ["-p1"],
+        patches = ["//third_party/gfootball:envpool.patch"],
+    )
+
+    maybe(
         http_archive,
         name = "bazel_clang_tidy",
-        sha256 = "ec8c5bf0c02503b928c2e42edbd15f75e306a05b2cae1f34a7bc84724070b98b",
-        strip_prefix = "bazel_clang_tidy-783aa523aafb4a6798a538c61e700b6ed27975a7",
+        sha256 = "fdc45b36544abca36c2fcb85c951915c4e6cb986b2be2977582f18f5b70b99ec",
+        strip_prefix = "bazel_clang_tidy-c4d35e0d0b838309358e57a2efed831780f85cd0",
         urls = [
-            "https://github.com/erenon/bazel_clang_tidy/archive/783aa523aafb4a6798a538c61e700b6ed27975a7.zip",
-            "https://ml.cs.tsinghua.edu.cn/~jiayi/envpool/erenon/bazel_clang_tidy/783aa523aafb4a6798a538c61e700b6ed27975a7.zip",
+            "https://github.com/erenon/bazel_clang_tidy/archive/c4d35e0d0b838309358e57a2efed831780f85cd0.zip",
         ],
     )
 

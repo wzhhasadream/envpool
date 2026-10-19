@@ -20,7 +20,9 @@
 
 #include <cmath>
 #include <random>
+#include <utility>
 
+#include "envpool/classic_control/render_utils.h"
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
 
@@ -44,7 +46,7 @@ class MountainCarEnvFns {
 
 using MountainCarEnvSpec = EnvSpec<MountainCarEnvFns>;
 
-class MountainCarEnv : public Env<MountainCarEnvSpec> {
+class MountainCarEnv : public Env<MountainCarEnvSpec>, public RenderableEnv {
  protected:
   const double kMinPos = -1.2;
   const double kMaxPos = 0.6;
@@ -66,6 +68,10 @@ class MountainCarEnv : public Env<MountainCarEnvSpec> {
         dist_(-0.6, -0.4) {}
 
   bool IsDone() override { return done_; }
+
+  std::pair<int, int> RenderSize(int width, int height) const override {
+    return {width > 0 ? width : 600, height > 0 ? height : 400};
+  }
 
   void Reset() override {
     pos_ = dist_(gen_);
@@ -99,9 +105,14 @@ class MountainCarEnv : public Env<MountainCarEnvSpec> {
     WriteState(-1.0);
   }
 
+  void Render(int width, int height, int /*camera_id*/,
+              unsigned char* rgb) override {
+    rendering::RenderMountainCar(pos_, kGoalPos, width, height, rgb);
+  }
+
  private:
   void WriteState(float reward) {
-    State state = Allocate();
+    auto state = Allocate();
     state["obs"_][0] = static_cast<float>(pos_);
     state["obs"_][1] = static_cast<float>(vel_);
     state["reward"_] = reward;

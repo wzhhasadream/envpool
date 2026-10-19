@@ -17,42 +17,38 @@
 #ifndef ENVPOOL_CORE_XLA_TEMPLATE_H_
 #define ENVPOOL_CORE_XLA_TEMPLATE_H_
 
-#include <cuda_runtime_api.h>
 #include <pybind11/functional.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <xla/ffi/api/ffi.h>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
 #include <string>
 #include <tuple>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
+#include "envpool/core/cuda_driver.h"
+#include "envpool/core/spec.h"
+
 namespace py = pybind11;
+namespace xla_ffi = xla::ffi;
 
 template <typename Spec>
 static auto SpecToTuple(const Spec& spec) {
   return std::make_tuple(py::dtype::of<typename Spec::dtype>(), spec.shape);
 }
 
-template <std::size_t N>
-void ToArray(const void** raw, std::array<void*, N>* array) {
-  int i = 0;
-  std::apply([&](auto&&... a) { ((a = const_cast<void*>(raw[i++])), ...); },
-             *array);
-}
-
-template <std::size_t N>
-void ToArray(void** raw, std::array<void*, N>* array) {
-  int i = 0;
-  std::apply([&](auto&&... a) { ((a = raw[i++]), ...); }, *array);
-}
-
 template <typename Class, typename CC>
 struct CustomCall {
-  using InSpecs =
-      typename std::invoke_result<decltype(CC::InSpecs), Class*>::type;
-  using OutSpecs =
-      typename std::invoke_result<decltype(CC::OutSpecs), Class*>::type;
+  using InSpecs = decltype(CC::InSpecs(std::declval<Class*>()));
+  using OutSpecs = decltype(CC::OutSpecs(std::declval<Class*>()));
   using In = std::array<void*, std::tuple_size_v<InSpecs>>;
   using Out = std::array<void*, std::tuple_size_v<OutSpecs>>;
 
@@ -61,33 +57,114 @@ struct CustomCall {
         std::string(reinterpret_cast<const char*>(&obj), sizeof(Class*)));
   }
 
-  static void Cpu(void* out, const void** in) {
-    Class* obj = *reinterpret_cast<Class**>(const_cast<void*>(in[0]));
-    in += 1;
-    In in_arr;
-    Out out_arr;
-    ToArray(in, &in_arr);
-    if (std::tuple_size<Out>::value == 0) {
-      std::memcpy(out, &obj, sizeof(Class*));
-    } else {
-      void** outs = reinterpret_cast<void**>(out);
-      std::memcpy(outs[0], &obj, sizeof(Class*));
-      ToArray(outs + 1, &out_arr);
+  static xla_ffi::ErrorOr<Class*> ResolveHandle(xla_ffi::Dictionary attrs) {
+    auto handle = attrs.get<std::int64_t>("handle");
+    if (!handle) {
+      return xla_ffi::Unexpected(handle.error());
     }
-    CC::Cpu(obj, in_arr, out_arr);
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<Class*>(
+        static_cast<std::uintptr_t>(static_cast<std::int64_t>(*handle)));
   }
 
-  static void Gpu(cudaStream_t stream, void** buffers, const char* opaque,
-                  std::size_t opaque_len) {
-    Class* obj = *reinterpret_cast<Class**>(const_cast<char*>(opaque));
-    buffers += 1;
-    In in_arr;
-    Out out_arr;
-    ToArray(buffers, &in_arr);
-    buffers += std::tuple_size<In>::value;
-    buffers += 1;
-    ToArray(buffers, &out_arr);
-    CC::Gpu(obj, stream, in_arr, out_arr);
+  static xla_ffi::Error ValidateArity(xla_ffi::RemainingArgs args,
+                                      xla_ffi::RemainingRets rets) {
+    constexpr std::size_t expected_args = std::tuple_size_v<In> + 1;
+    constexpr std::size_t expected_rets = std::tuple_size_v<Out> + 1;
+    if (args.size() != expected_args) {
+      return xla_ffi::Error::InvalidArgument(
+          "Expected " + std::to_string(expected_args) + " buffers, got " +
+          std::to_string(args.size()));
+    }
+    if (rets.size() != expected_rets) {
+      return xla_ffi::Error::InvalidArgument(
+          "Expected " + std::to_string(expected_rets) + " results, got " +
+          std::to_string(rets.size()));
+    }
+    return {};
+  }
+
+  static xla_ffi::Error PopulateInBuffers(xla_ffi::RemainingArgs args,
+                                          In* in_arr) {
+    for (std::size_t i = 0; i < in_arr->size(); ++i) {
+      auto buffer = args.get<xla_ffi::AnyBuffer>(i + 1);
+      if (!buffer) {
+        return buffer.error();
+      }
+      (*in_arr)[i] = (*buffer).untyped_data();
+    }
+    return {};
+  }
+
+  static xla_ffi::Error PopulateOutBuffers(xla_ffi::RemainingRets rets,
+                                           Out* out_arr) {
+    for (std::size_t i = 0; i < out_arr->size(); ++i) {
+      auto buffer = rets.get<xla_ffi::AnyBuffer>(i + 1);
+      if (!buffer) {
+        return buffer.error();
+      }
+      (*out_arr)[i] = (*buffer)->untyped_data();
+    }
+    return {};
+  }
+
+  static xla_ffi::Error CpuExecute(xla_ffi::RemainingArgs args,
+                                   xla_ffi::RemainingRets rets,
+                                   xla_ffi::Dictionary attrs) {
+    if (auto err = ValidateArity(args, rets); err.failure()) {
+      return err;
+    }
+    auto obj = ResolveHandle(attrs);
+    if (!obj) {
+      return obj.error();
+    }
+    In in_arr{};
+    Out out_arr{};
+    if (auto err = PopulateInBuffers(args, &in_arr); err.failure()) {
+      return err;
+    }
+    if (auto err = PopulateOutBuffers(rets, &out_arr); err.failure()) {
+      return err;
+    }
+    // Never let native validation exceptions cross the XLA C ABI.
+    try {
+      CC::Cpu(*obj, in_arr, out_arr);
+    } catch (const std::invalid_argument& error) {
+      return xla_ffi::Error::InvalidArgument(error.what());
+    } catch (const std::exception& error) {
+      return xla_ffi::Error::Internal(error.what());
+    }
+    return {};
+  }
+
+  static xla_ffi::Error GpuExecute(EnvPoolGpuStream stream,
+                                   xla_ffi::RemainingArgs args,
+                                   xla_ffi::RemainingRets rets,
+                                   xla_ffi::Dictionary attrs) {
+    if (auto err = ValidateArity(args, rets); err.failure()) {
+      return err;
+    }
+    auto obj = ResolveHandle(attrs);
+    if (!obj) {
+      return obj.error();
+    }
+    In in_arr{};
+    Out out_arr{};
+    if (auto err = PopulateInBuffers(args, &in_arr); err.failure()) {
+      return err;
+    }
+    if (auto err = PopulateOutBuffers(rets, &out_arr); err.failure()) {
+      return err;
+    }
+    // Never let native validation exceptions cross the XLA C ABI.
+    try {
+      CC::Gpu(*obj, stream, in_arr, out_arr);
+    } catch (const std::invalid_argument& error) {
+      return xla_ffi::Error::InvalidArgument(error.what());
+    } catch (const std::exception& error) {
+      return xla_ffi::Error::Internal(error.what());
+    }
+    return {};
   }
 
   static auto Specs(Class* obj) {
@@ -106,9 +183,28 @@ struct CustomCall {
   }
 
   static auto Capsules() {
-    return std::make_tuple(
-        py::capsule(reinterpret_cast<void*>(Cpu), "xla._CUSTOM_CALL_TARGET"),
-        py::capsule(reinterpret_cast<void*>(Gpu), "xla._CUSTOM_CALL_TARGET"));
+    XLA_FFI_DEFINE_HANDLER(cpu_handler, CpuExecute,
+                           xla_ffi::Ffi::Bind()
+                               .RemainingArgs()
+                               .RemainingRets()
+                               .Attrs<xla_ffi::Dictionary>());
+    // NOLINTNEXTLINE(bugprone-casting-through-void)
+    auto* cpu_handler_ptr = reinterpret_cast<void*>(cpu_handler);
+#if defined(__APPLE__)
+    // CUDA is not available on macOS, so only expose the CPU FFI target.
+    return std::make_tuple(py::capsule(cpu_handler_ptr), py::none());
+#else
+    XLA_FFI_DEFINE_HANDLER(gpu_handler, GpuExecute,
+                           xla_ffi::Ffi::Bind()
+                               .Ctx<xla_ffi::PlatformStream<EnvPoolGpuStream>>()
+                               .RemainingArgs()
+                               .RemainingRets()
+                               .Attrs<xla_ffi::Dictionary>());
+    // NOLINTNEXTLINE(bugprone-casting-through-void)
+    auto* gpu_handler_ptr = reinterpret_cast<void*>(gpu_handler);
+    return std::make_tuple(py::capsule(cpu_handler_ptr),
+                           py::capsule(gpu_handler_ptr));
+#endif
   }
 
   static auto Xla(Class* obj) {

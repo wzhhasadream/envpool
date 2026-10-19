@@ -4,6 +4,25 @@ Procgen
 We use ``procgen==0.10.7`` as the codebase.
 See https://github.com/openai/procgen/tree/0.10.7
 
+.. note::
+
+   Procgen links against Qt 5. Linux wheels do not vendor the Qt runtime; if
+   making a Procgen environment reports missing ``libQt5Core.so.5`` or
+   ``libQt5Gui.so.5``, install the system Qt 5 runtime, for example with
+   ``apt install qtbase5-dev`` or ``dnf install qt5-qtbase``.
+
+
+Render Compare
+--------------
+
+Representative first-frame compares for Procgen tasks that support rendering.
+In each panel, EnvPool is on the left and the exact channel-last observation
+oracle used by the test suite is on the right.
+
+.. image:: ../_static/render_samples/procgen_oracle_compare.png
+    :width: 900px
+    :align: center
+
 
 Options
 -------
@@ -14,7 +33,9 @@ Options
   ``num_envs``;
 * ``num_threads (int)``: the maximum thread number for executing the actual
   ``env.step``, default to ``batch_size``;
-* ``seed (int)``: the environment seed, default to ``42``;
+* ``seed (int | Sequence[int])``: the environment seed. When a sequence is
+  provided, it must contain exactly one seed per environment. Default to
+  ``42``;
 * ``max_episode_steps (int)``: the maximum number of steps for one episode,
   each procgen game has different timeout value;
 * ``channel_first (bool)``: whether to transpose the observation image to
@@ -30,9 +51,13 @@ Options
 * ``use_generated_assets (bool)``: default to ``False``;
 * ``paint_vel_info (bool)``: default to ``False``;
 * ``use_easy_jump (bool)``: default to ``False``;
-* ``distribution_mode (int)``: one of ``(0, 1, 2, 10)``; ``0`` stands for easy
-  mode, ``1`` stands for hard mode, ``2`` stands for extreme mode, ``10``
-  stands for memory mode. The default value is determined by ``task_id``.
+* ``distribution_mode (int)``: one of ``(0, 1, 2, 10, 20)``; ``0`` stands for
+  easy mode, ``1`` stands for hard mode, ``2`` stands for extreme mode, ``10``
+  stands for memory mode, and ``20`` stands for exploration mode. Exploration
+  mode follows Procgen's Python wrapper behavior: it uses hard mode levels,
+  overrides ``num_levels`` to ``1``, and overrides ``start_level`` to a
+  game-specific exploration seed. The default value is determined by
+  ``task_id``.
 
 Note: arguments after ``env_name`` are provided by procgen environment itself.
 We keep the default value as-is. We haven't tested the setting of
@@ -63,13 +88,16 @@ Available Tasks
 * ``CaveflyerEasy-v0``
 * ``CaveflyerHard-v0``
 * ``CaveflyerMemory-v0``
+* ``CaveflyerExploration-v0``
 * ``ChaserEasy-v0``
 * ``ChaserHard-v0``
 * ``ChaserExtreme-v0``
 * ``ClimberEasy-v0``
 * ``ClimberHard-v0``
+* ``ClimberExploration-v0``
 * ``CoinrunEasy-v0``
 * ``CoinrunHard-v0``
+* ``CoinrunExploration-v0``
 * ``DodgeballEasy-v0``
 * ``DodgeballHard-v0``
 * ``DodgeballExtreme-v0``
@@ -79,20 +107,25 @@ Available Tasks
 * ``HeistEasy-v0``
 * ``HeistHard-v0``
 * ``HeistMemory-v0``
+* ``HeistExploration-v0``
 * ``JumperEasy-v0``
 * ``JumperHard-v0``
 * ``JumperMemory-v0``
+* ``JumperExploration-v0``
 * ``LeaperEasy-v0``
 * ``LeaperHard-v0``
 * ``LeaperExtreme-v0``
+* ``LeaperExploration-v0``
 * ``MazeEasy-v0``
 * ``MazeHard-v0``
 * ``MazeMemory-v0``
+* ``MazeExploration-v0``
 * ``MinerEasy-v0``
 * ``MinerHard-v0``
 * ``MinerMemory-v0``
 * ``NinjaEasy-v0``
 * ``NinjaHard-v0``
+* ``NinjaExploration-v0``
 * ``PlunderEasy-v0``
 * ``PlunderHard-v0``
 * ``StarpilotEasy-v0``

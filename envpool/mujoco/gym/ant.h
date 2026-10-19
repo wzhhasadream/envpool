@@ -33,9 +33,14 @@ class AntEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict(
         "reward_threshold"_.Bind(6000.0), "frame_skip"_.Bind(5),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
         "post_constraint"_.Bind(true), "use_contact_force"_.Bind(false),
+        "legacy_healthy_reward"_.Bind(true),
+        "exclude_worldbody_contact_forces"_.Bind(false),
         "terminate_when_unhealthy"_.Bind(true),
         "exclude_current_positions_from_observation"_.Bind(true),
+        "xml_file"_.Bind(std::string("ant.xml")),
+        "gymnasium_v5_render_camera"_.Bind(false),
         "forward_reward_weight"_.Bind(1.0), "ctrl_cost_weight"_.Bind(0.5),
         "contact_cost_weight"_.Bind(5e-4), "healthy_reward"_.Bind(1.0),
         "healthy_z_min"_.Bind(0.2), "healthy_z_max"_.Bind(1.0),
@@ -44,12 +49,15 @@ class AntEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     int obs_n = conf["exclude_current_positions_from_observation"_] ? 27 : 29;
     if (conf["use_contact_force"_]) {
-      obs_n += 14 * 6;
+      obs_n += conf["exclude_worldbody_contact_forces"_] ? 13 * 6 : 14 * 6;
     }
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({obs_n}, {-inf, inf})),
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
+                                          conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
                     "info:qpos0"_.Bind(Spec<mjtNum>({15})),
                     "info:qvel0"_.Bind(Spec<mjtNum>({14})),
@@ -71,11 +79,21 @@ class AntEnvFns {
 };
 
 using AntEnvSpec = EnvSpec<AntEnvFns>;
+using AntPixelEnvFns = PixelObservationEnvFns<AntEnvFns>;
+using AntPixelEnvSpec = EnvSpec<AntPixelEnvFns>;
 
-class AntEnv : public Env<AntEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class AntEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
   int id_torso_;
   bool terminate_when_unhealthy_, no_pos_, use_contact_force_;
+  bool legacy_healthy_reward_, exclude_worldbody_contact_forces_;
+  bool gymnasium_v5_render_camera_;
   mjtNum ctrl_cost_weight_, contact_cost_weight_;
   mjtNum forward_reward_weight_, healthy_reward_;
   mjtNum healthy_z_min_, healthy_z_max_;
@@ -84,15 +102,28 @@ class AntEnv : public Env<AntEnvSpec>, public MujocoEnv {
   std::normal_distribution<> dist_qvel_;
 
  public:
-  AntEnv(const Spec& spec, int env_id)
-      : Env<AntEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] + "/mujoco/assets_gym/ant.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  AntEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         terminate_when_unhealthy_(spec.config["terminate_when_unhealthy"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
         use_contact_force_(spec.config["use_contact_force"_]),
+        legacy_healthy_reward_(spec.config["legacy_healthy_reward"_]),
+        exclude_worldbody_contact_forces_(
+            spec.config["exclude_worldbody_contact_forces"_]),
+        gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
         contact_cost_weight_(spec.config["contact_cost_weight"_]),
         forward_reward_weight_(spec.config["forward_reward_weight"_]),
@@ -118,53 +149,78 @@ class AntEnv : public Env<AntEnvSpec>, public MujocoEnv {
 #endif
   }
 
+  bool RenderCamera(mjvCamera* camera) override {
+    if (!gymnasium_v5_render_camera_) {
+      return false;
+    }
+    camera->distance = 4.0;
+    ApplyGymnasiumDefaultCameraId(camera);
+    return true;
+  }
+
   bool IsDone() override { return done_; }
 
   void Reset() override {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    WriteState(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum x_before = data_->xpos[id_torso_ * 3];
-    mjtNum y_before = data_->xpos[id_torso_ * 3 + 1];
-    MujocoStep(act);
-    mjtNum x_after = data_->xpos[id_torso_ * 3];
-    mjtNum y_after = data_->xpos[id_torso_ * 3 + 1];
+    double reward_sum = 0.0;
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum x_before = data_->xpos[id_torso_ * 3];
+      mjtNum y_before = data_->xpos[id_torso_ * 3 + 1];
+      MujocoStep(act);
+      mjtNum x_after = data_->xpos[id_torso_ * 3];
+      mjtNum y_after = data_->xpos[id_torso_ * 3 + 1];
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
-    }
-    // xv and yv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (x_after - x_before) / dt;
-    mjtNum yv = (y_after - y_before) / dt;
-    // contact cost
-    mjtNum contact_cost = 0.0;
-    if (use_contact_force_) {
-      for (int i = 0; i < 6 * model_->nbody; ++i) {
-        mjtNum x = data_->cfrc_ext[i];
-        x = std::min(contact_force_max_, x);
-        x = std::max(contact_force_min_, x);
-        contact_cost += contact_cost_weight_ * x * x;
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+      // xv and yv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (x_after - x_before) / dt;
+      mjtNum yv = (y_after - y_before) / dt;
+      // contact cost
+      mjtNum contact_cost = 0.0;
+      if (use_contact_force_) {
+        int start_body = exclude_worldbody_contact_forces_ ? 1 : 0;
+        for (int i = start_body; i < model_->nbody; ++i) {
+          for (int j = 0; j < 6; ++j) {
+            mjtNum x = data_->cfrc_ext[i * 6 + j];
+            x = std::min(contact_force_max_, x);
+            x = std::max(contact_force_min_, x);
+            contact_cost += contact_cost_weight_ * x * x;
+          }
+        }
+      }
+      // reward and done
+      bool is_healthy = IsHealthy();
+      bool give_healthy_reward = is_healthy;
+      if (legacy_healthy_reward_) {
+        give_healthy_reward = terminate_when_unhealthy_ || is_healthy;
+      }
+      mjtNum healthy_reward = give_healthy_reward ? healthy_reward_ : 0.0;
+      auto reward =
+          static_cast<float>(xv * forward_reward_weight_ + healthy_reward -
+                             ctrl_cost - contact_cost);
+      ++elapsed_step_;
+      done_ = (terminate_when_unhealthy_ ? !is_healthy : false) ||
+              (elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, yv, ctrl_cost,
+                   contact_cost, x_after, y_after, healthy_reward, false);
+        break;
       }
     }
-    // reward and done
-    mjtNum healthy_reward =
-        terminate_when_unhealthy_ || IsHealthy() ? healthy_reward_ : 0.0;
-    auto reward = static_cast<float>(xv * forward_reward_weight_ +
-                                     healthy_reward - ctrl_cost - contact_cost);
-    ++elapsed_step_;
-    done_ = (terminate_when_unhealthy_ ? !IsHealthy() : false) ||
-            (elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, yv, ctrl_cost, contact_cost, x_after, y_after,
-               healthy_reward);
   }
 
  private:
@@ -187,25 +243,37 @@ class AntEnv : public Env<AntEnvSpec>, public MujocoEnv {
 
   void WriteState(float reward, mjtNum xv, mjtNum yv, mjtNum ctrl_cost,
                   mjtNum contact_cost, mjtNum x_after, mjtNum y_after,
-                  mjtNum healthy_reward) {
-    State state = Allocate();
+                  mjtNum healthy_reward, bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    for (int i = no_pos_ ? 2 : 0; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
-    }
-    for (int i = 0; i < model_->nv; ++i) {
-      *(obs++) = data_->qvel[i];
-    }
-    if (use_contact_force_) {
-      for (int i = 0; i < 6 * model_->nbody; ++i) {
-        mjtNum x = data_->cfrc_ext[i];
-        x = std::min(std::max(x, contact_force_min_), contact_force_max_);
-        *(obs++) = x;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      for (int i = no_pos_ ? 2 : 0; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
       }
+      for (int i = 0; i < model_->nv; ++i) {
+        *(obs++) = data_->qvel[i];
+      }
+      if (use_contact_force_) {
+        int start_body = exclude_worldbody_contact_forces_ ? 1 : 0;
+        for (int i = start_body; i < model_->nbody; ++i) {
+          for (int j = 0; j < 6; ++j) {
+            mjtNum x = data_->cfrc_ext[i * 6 + j];
+            x = std::min(std::max(x, contact_force_min_), contact_force_max_);
+            *(obs++) = x;
+          }
+        }
+      }
+      CommitObservation(&obs_state, reset);
     }
-    // info
     state["info:reward_forward"_] = xv * forward_reward_weight_;
     state["info:reward_ctrl"_] = -ctrl_cost;
     state["info:reward_contact"_] = -contact_cost;
@@ -223,7 +291,10 @@ class AntEnv : public Env<AntEnvSpec>, public MujocoEnv {
   }
 };
 
+using AntEnv = AntEnvBase<AntEnvSpec, false>;
+using AntPixelEnv = AntEnvBase<AntPixelEnvSpec, true>;
 using AntEnvPool = AsyncEnvPool<AntEnv>;
+using AntPixelEnvPool = AsyncEnvPool<AntPixelEnv>;
 
 }  // namespace mujoco_gym
 

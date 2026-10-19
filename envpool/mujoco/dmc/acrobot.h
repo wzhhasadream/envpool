@@ -40,16 +40,22 @@ std::string GetAcrobotXML(const std::string& base_path,
 class AcrobotEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(1),
+    return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("swingup")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
-    return MakeDict("obs:orientations"_.Bind(Spec<mjtNum>({4})),
-                    "obs:velocity"_.Bind(Spec<mjtNum>({2}))
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs:orientations"_.Bind(
+            StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
+        "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
-                        ,
-                    "info:qpos0"_.Bind(Spec<mjtNum>({2}))
+            ,
+        "info:qpos0"_.Bind(Spec<mjtNum>({2}))
 #endif
     );  // NOLINT
   }
@@ -60,20 +66,35 @@ class AcrobotEnvFns {
 };
 
 using AcrobotEnvSpec = EnvSpec<AcrobotEnvFns>;
+using AcrobotPixelEnvFns = PixelObservationEnvFns<AcrobotEnvFns>;
+using AcrobotPixelEnvSpec = EnvSpec<AcrobotPixelEnvFns>;
 
-class AcrobotEnv : public Env<AcrobotEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class AcrobotEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   int id_upper_arm_, id_lower_arm_, id_target_, id_tip_, id_shoulder_,
       id_elbow_;
   bool is_sparse_;
 
  public:
-  AcrobotEnv(const Spec& spec, int env_id)
-      : Env<AcrobotEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  AcrobotEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
             GetAcrobotXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_]),
+            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         id_upper_arm_(mj_name2id(model_, mjOBJ_XBODY, "upper_arm")),
         id_lower_arm_(mj_name2id(model_, mjOBJ_XBODY, "lower_arm")),
         id_target_(mj_name2id(model_, mjOBJ_SITE, "target")),
@@ -100,13 +121,13 @@ class AcrobotEnv : public Env<AcrobotEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -117,16 +138,25 @@ class AcrobotEnv : public Env<AcrobotEnvSpec>, public MujocoEnv {
   bool TaskShouldTerminateEpisode() override { return false; }
 
  private:
-  void WriteState() {
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    const auto& orientations = Orientations();
-    state["obs:orientations"_].Assign(orientations.begin(),
-                                      orientations.size());
-    state["obs:velocity"_].Assign(data_->qvel, model_->nv);
-    // info for check alignment
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& orientations = Orientations();
+      auto obs_orientations = state["obs:orientations"_];
+      AssignObservation("obs:orientations", &obs_orientations,
+                        orientations.data(), orientations.size(), reset);
+      auto obs_velocity = state["obs:velocity"_];
+      AssignObservation("obs:velocity", &obs_velocity, data_->qvel, model_->nv,
+                        reset);
+    }
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
 #endif
@@ -163,7 +193,10 @@ class AcrobotEnv : public Env<AcrobotEnvSpec>, public MujocoEnv {
   }
 };
 
+using AcrobotEnv = AcrobotEnvBase<AcrobotEnvSpec, false>;
+using AcrobotPixelEnv = AcrobotEnvBase<AcrobotPixelEnvSpec, true>;
 using AcrobotEnvPool = AsyncEnvPool<AcrobotEnv>;
+using AcrobotPixelEnvPool = AsyncEnvPool<AcrobotPixelEnv>;
 
 }  // namespace mujoco_dmc
 

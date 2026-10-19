@@ -14,10 +14,15 @@
 
 #include "envpool/atari/atari_env.h"
 
-#include <glog/logging.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <random>
+#include <string>
+#include <vector>
+
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 
 using AtariState = atari::AtariEnv::State;
 using AtariAction = atari::AtariEnv::Action;
@@ -44,21 +49,19 @@ TEST(AtariEnvTest, GrayScaleMaxPoolOrder) {
   ale::ALEInterface env;
   env.loadROM(rom_path);
   // color mapping from pixel_t to RGB
-  env.theOSystem->colourPalette().applyPaletteRGB(col0_ptr, ptr0.begin(),
-                                                  n * n);
-  env.theOSystem->colourPalette().applyPaletteRGB(col1_ptr, ptr1.begin(),
-                                                  n * n);
+  env.theOSystem->colourPalette().applyPaletteRGB(col0_ptr, ptr0.data(), n * n);
+  env.theOSystem->colourPalette().applyPaletteRGB(col1_ptr, ptr1.data(), n * n);
   // maxpool RGB
   for (int i = 0; i < n * n * 3; ++i) {
     col0_ptr[i] = std::max(col0_ptr[i], col1_ptr[i]);
   }
   // gray scale
   GrayScale(col0, &result);
-  std::memcpy(arr.begin(), result_ptr, sizeof arr);
+  std::memcpy(arr.data(), result_ptr, sizeof arr);
   // ref
-  env.theOSystem->colourPalette().applyPaletteGrayscale(col0_ptr, ptr0.begin(),
+  env.theOSystem->colourPalette().applyPaletteGrayscale(col0_ptr, ptr0.data(),
                                                         n * n);
-  env.theOSystem->colourPalette().applyPaletteGrayscale(col1_ptr, ptr1.begin(),
+  env.theOSystem->colourPalette().applyPaletteGrayscale(col1_ptr, ptr1.data(),
                                                         n * n);
   // maxpool
   for (int i = 0; i < n * n; ++i) {
@@ -248,6 +251,26 @@ TEST(AtariEnvTest, EpisodicLife) {
       action["action"_][j] = i % 4;
     }
     envpool2.Send(action);
+  }
+}
+
+TEST(AtariEnvTest, ExplicitResetWithEpisodicLife) {
+  auto config = atari::AtariEnvSpec::kDefaultConfig;
+  config["num_envs"_] = 1;
+  config["batch_size"_] = 1;
+  config["seed"_] = 42;
+  config["episodic_life"_] = true;
+  config["task"_] = "breakout";
+  atari::AtariEnvSpec spec(config);
+  atari::AtariEnvPool envpool(spec);
+  TArray all_env_ids(Spec<int>({1}));
+  all_env_ids[0] = 0;
+  for (int i = 0; i < 20; ++i) {
+    envpool.Reset(all_env_ids);
+    AtariState state(envpool.Recv());
+    auto lives = state["info:lives"_];
+    int live = lives[0];
+    EXPECT_EQ(live, 5) << "reset #" << i;
   }
 }
 

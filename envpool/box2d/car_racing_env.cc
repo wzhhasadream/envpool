@@ -21,6 +21,7 @@
 #include <cmath>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -35,9 +36,9 @@ void CarRacingFrictionDetector::Contact(b2Contact* contact, bool begin) {
   Wheel* obj = nullptr;
 
   auto* u1 = reinterpret_cast<UserData*>(  // NOLINT
-      contact->GetFixtureA()->GetBody()->GetUserData().pointer);
+      contact->GetFixtureA()->GetBody()->GetUserData());
   auto* u2 = reinterpret_cast<UserData*>(  // NOLINT
-      contact->GetFixtureB()->GetBody()->GetUserData().pointer);
+      contact->GetFixtureB()->GetBody()->GetUserData());
 
   if (u1 == nullptr || u2 == nullptr) {
     return;
@@ -92,20 +93,96 @@ CarRacingBox2dEnv::CarRacingBox2dEnv(int max_episode_steps,
   fd_tile_.shape = &shape;
 }
 
+std::pair<int, int> CarRacingBox2dEnv::RenderSize(int width, int height) const {
+  return {width > 0 ? width : 600, height > 0 ? height : 400};
+}
+
+std::array<float, 7> CarRacingBox2dEnv::BodyState(const b2Body* body) const {
+  const auto pos = body->GetPosition();
+  const auto vel = body->GetLinearVelocity();
+  return {pos.x,
+          pos.y,
+          body->GetAngle(),
+          vel.x,
+          vel.y,
+          body->GetAngularVelocity(),
+          body->IsAwake() ? 1.0f : 0.0f};
+}
+
+std::vector<float> CarRacingBox2dEnv::TrackState() const {
+  std::vector<float> data;
+  data.reserve(track_.size() * 4);
+  for (const auto& segment : track_) {
+    data.insert(data.end(), segment.begin(), segment.end());
+  }
+  return data;
+}
+
+std::vector<float> CarRacingBox2dEnv::RoadPolyState() const {
+  std::vector<float> data;
+  data.reserve(roads_poly_.size() * 4 * 2);
+  for (const auto& [poly, color] : roads_poly_) {
+    (void)color;
+    for (const auto& vertex : poly) {
+      data.emplace_back(vertex.x);
+      data.emplace_back(vertex.y);
+    }
+  }
+  return data;
+}
+
+std::vector<float> CarRacingBox2dEnv::RoadColorState() const {
+  std::vector<float> data;
+  data.reserve(roads_poly_.size() * 3);
+  for (const auto& [poly, color] : roads_poly_) {
+    (void)poly;
+    // cv::Scalar stores BGR, while Gymnasium's pygame renderer expects RGB.
+    data.emplace_back(static_cast<float>(color[2]));
+    data.emplace_back(static_cast<float>(color[1]));
+    data.emplace_back(static_cast<float>(color[0]));
+  }
+  return data;
+}
+
+std::array<float, 35> CarRacingBox2dEnv::CarBodyStates() const {
+  std::array<float, 35> data;
+  auto hull_state = BodyState(car_->hull_);
+  std::copy(hull_state.begin(), hull_state.end(), data.begin());
+  for (int i = 0; i < 4; ++i) {
+    auto wheel_state = BodyState(car_->wheels_[i]->body);
+    std::copy(wheel_state.begin(), wheel_state.end(),
+              data.begin() + (i + 1) * wheel_state.size());
+  }
+  return data;
+}
+
+std::array<float, 20> CarRacingBox2dEnv::CarWheelStates() const {
+  std::array<float, 20> data;
+  for (int i = 0; i < 4; ++i) {
+    auto* wheel = car_->wheels_[i];
+    data[i * 5 + 0] = wheel->gas;
+    data[i * 5 + 1] = wheel->brake;
+    data[i * 5 + 2] = wheel->steer;
+    data[i * 5 + 3] = wheel->phase;
+    data[i * 5 + 4] = wheel->omega;
+  }
+  return data;
+}
+
 bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
   // Create checkpoints
   std::vector<std::array<float, 3>> checkpoints;
   for (int c = 0; c < kCheckPoint; ++c) {
-    auto noise = RandUniform(0, 2.0 * M_PI / kCheckPoint)(*gen);
-    auto alpha = 2.0 * M_PI * c / kCheckPoint + noise;
+    auto noise = RandUniform(0, 2.0 * b2_pi / kCheckPoint)(*gen);
+    auto alpha = 2.0 * b2_pi * c / kCheckPoint + noise;
     auto rad = RandUniform(kTrackRad / 3, kTrackRad)(*gen);
 
     if (c == 0) {
       alpha = 0;
       rad = 1.5 * kTrackRad;
     } else if (c == kCheckPoint - 1) {
-      alpha = 2 * M_PI * c / kCheckPoint;
-      start_alpha_ = static_cast<float>(-M_PI / kCheckPoint);
+      alpha = 2 * b2_pi * c / kCheckPoint;
+      start_alpha_ = static_cast<float>(-b2_pi / kCheckPoint);
       rad = 1.5 * kTrackRad;
     }
     std::array<float, 3> cp = {static_cast<float>(alpha),
@@ -134,7 +211,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
     }
     if (alpha < 0) {
       visited_other_side = true;
-      alpha += 2 * M_PI;
+      alpha += 2 * b2_pi;
     }
     float dest_alpha;
     float dest_x;
@@ -157,7 +234,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
       if (!failed) {
         break;
       }
-      alpha -= 2 * M_PI;
+      alpha -= 2 * b2_pi;
     }
     float r1x = std::cos(beta);
     float r1y = std::sin(beta);
@@ -167,11 +244,11 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
     float dest_dy = dest_y - y;
     // destination vector projected on rad:
     float proj = r1x * dest_dx + r1y * dest_dy;
-    while (beta - alpha > 1.5 * M_PI) {
-      beta -= 2 * M_PI;
+    while (beta - alpha > 1.5 * b2_pi) {
+      beta -= 2 * b2_pi;
     }
-    while (beta - alpha < -1.5 * M_PI) {
-      beta += 2 * M_PI;
+    while (beta - alpha < -1.5 * b2_pi) {
+      beta += 2 * b2_pi;
     }
     float prev_beta = beta;
     proj *= kScale;
@@ -197,7 +274,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
   // Find closed loop range i1..i2, first loop should be ignored, second is OK
   int i1 = -1;
   int i2 = -1;
-  for (int i = static_cast<int>(current_track.size()) - 1;; --i) {
+  for (auto i = static_cast<int>(current_track.size()) - 1;; --i) {
     if (i == 0) {
       return false;  // failed
     }
@@ -229,7 +306,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
   }
 
   // Red-white border on hard turns
-  int track_size = static_cast<int>(current_track.size());
+  const auto track_size = static_cast<int>(current_track.size());
   std::vector<bool> border(track_size, false);
   for (int i = 0; i < track_size; i++) {
     bool good = true;
@@ -280,8 +357,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
     t->body = world_->CreateBody(&bd);
     t->body->CreateFixture(&fd_tile_);
 
-    // t->body->SetUserData(t); // recently removed from 2.4.1
-    t->body->GetUserData().pointer = reinterpret_cast<uintptr_t>(t);
+    t->body->SetUserData(t);
 
     float c = 2.55f * static_cast<float>(i % 3);
     t->road_color = {kRoadColor[0] + c, kRoadColor[1] + c, kRoadColor[2] + c};
@@ -292,7 +368,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
     t->idx = i;
     t->body->GetFixtureList()[0].SetSensor(true);
     roads_.push_back(t);
-    roads_poly_.emplace_back(std::make_pair(roads_vertices, t->road_color));
+    roads_poly_.emplace_back(roads_vertices, t->road_color);
 
     if (border[i]) {
       auto side = Sign(beta2 - beta1);
@@ -313,7 +389,7 @@ bool CarRacingBox2dEnv::CreateTrack(std::mt19937* gen) {
       std::array<b2Vec2, 4> border_vertices = {b1_l, b1_r, b2_r, b2_l};
       cv::Scalar border_color =
           (i % 2 == 0) ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 0, 255);
-      roads_poly_.emplace_back(std::make_pair(border_vertices, border_color));
+      roads_poly_.emplace_back(border_vertices, border_color);
     }
   }
   track_ = current_track;
@@ -435,7 +511,7 @@ void CarRacingBox2dEnv::DrawColoredPolygon(
     auto f_roated = RotateRad(f, angle);
     f_roated = {f_roated[0] * zoom + translation[0],
                 f_roated[1] * zoom + translation[1]};
-    poly.emplace_back(cv::Point(f_roated[0], f_roated[1]));
+    poly.emplace_back(f_roated[0], f_roated[1]);
     if (-kMaxShapeDim <= f_roated[0] &&
         f_roated[0] <= static_cast<float>(kWindowW) + kMaxShapeDim &&
         -kMaxShapeDim <= f_roated[1] &&
@@ -587,6 +663,21 @@ void CarRacingBox2dEnv::Render() {
   cv::putText(surf_, cv::format("%04d", reward),
               cv::Point(20, kWindowH - kWindowH * 2 / 40.0),
               cv::FONT_HERSHEY_COMPLEX, 1, cv::Scalar(255, 255, 255), 2, 0);
+}
+
+void CarRacingBox2dEnv::Render(int width, int height, int /*camera_id*/,
+                               unsigned char* rgb) {
+  if (surf_.empty()) {
+    throw std::runtime_error("render called before CarRacing reset");
+  }
+  cv::Mat output(height, width, CV_8UC3, rgb);
+  if (width == surf_.cols && height == surf_.rows) {
+    cv::cvtColor(surf_, output, cv::COLOR_BGR2RGB);
+    return;
+  }
+  cv::Mat resized;
+  cv::resize(surf_, resized, cv::Size(width, height));
+  cv::cvtColor(resized, output, cv::COLOR_BGR2RGB);
 }
 
 }  // namespace box2d

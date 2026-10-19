@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -24,17 +25,29 @@ exports_files([
 py_library(
     name = "registration",
     srcs = ["registration.py"],
+    imports = [".."],
 )
 
 py_library(
     name = "entry",
     srcs = ["entry.py"],
+    imports = [".."],
     deps = [
         "//envpool/atari:atari_registration",
         "//envpool/box2d:box2d_registration",
         "//envpool/classic_control:classic_control_registration",
+        "//envpool/gfootball:gfootball_registration",
+        "//envpool/highway:highway_registration",
+        "//envpool/jumanji:jumanji_registration",
+        "//envpool/minigrid:minigrid_registration",
+        "//envpool/mujoco:metaworld_registration",
         "//envpool/mujoco:mujoco_dmc_registration",
         "//envpool/mujoco:mujoco_gym_registration",
+        "//envpool/mujoco:humanoid_bench_registration",
+        "//envpool/mujoco:myosuite_registration",
+        "//envpool/mujoco:playground_registration",
+        "//envpool/mujoco:robotics_registration",
+        "//envpool/pgx:pgx_registration",
         "//envpool/procgen:procgen_registration",
         "//envpool/toy_text:toy_text_registration",
         "//envpool/vizdoom:vizdoom_registration",
@@ -42,16 +55,33 @@ py_library(
 )
 
 py_library(
+    name = "wrappers",
+    srcs = ["wrappers.py"],
+    imports = [".."],
+    deps = [
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_library(
     name = "envpool",
     srcs = ["__init__.py"],
+    data = ["py.typed"],
+    imports = [".."],
     deps = [
         ":entry",
         ":registration",
+        ":wrappers",
         "//envpool/atari",
         "//envpool/box2d",
         "//envpool/classic_control",
-        "//envpool/mujoco:mujoco_dmc",
-        "//envpool/mujoco:mujoco_gym",
+        "//envpool/gfootball",
+        "//envpool/highway",
+        "//envpool/jumanji",
+        "//envpool/minigrid",
+        "//envpool/mujoco",
+        "//envpool/pgx",
         "//envpool/procgen",
         "//envpool/python",
         "//envpool/toy_text",
@@ -61,9 +91,49 @@ py_library(
 
 py_test(
     name = "make_test",
+    timeout = "long",
     srcs = ["make_test.py"],
+    data = ["//:setup_cfg"],
+    imports = [".."],
     deps = [
         ":envpool",
         requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "wrappers_test",
+    srcs = ["wrappers_test.py"],
+    imports = [".."],
+    deps = [
+        ":wrappers",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "wrappers_native_test",
+    timeout = "long",
+    srcs = ["wrappers_native_test.py"],
+    imports = [".."],
+    deps = [
+        ":registration",
+        ":wrappers",
+        "//envpool/atari",
+        "//envpool/atari:atari_registration",
+        "//envpool/mujoco:metaworld",
+        "//envpool/mujoco:metaworld_registration",
+        "//envpool/mujoco:mujoco_dmc",
+        "//envpool/mujoco:mujoco_dmc_registration",
+        "//envpool/mujoco:mujoco_gym",
+        "//envpool/mujoco:mujoco_gym_registration",
+        "//envpool/mujoco:myosuite",
+        "//envpool/mujoco:myosuite_registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
     ],
 )

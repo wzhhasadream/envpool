@@ -32,20 +32,25 @@ class InvertedPendulumEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("reward_threshold"_.Bind(950.0), "frame_skip"_.Bind(2),
+                    "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
                     "post_constraint"_.Bind(true), "healthy_reward"_.Bind(1.0),
+                    "reward_if_not_terminated"_.Bind(false),
+                    "xml_file"_.Bind(std::string("inverted_pendulum.xml")),
+                    "gymnasium_v5_render_camera"_.Bind(false),
                     "healthy_z_min"_.Bind(-0.2), "healthy_z_max"_.Bind(0.2),
                     "reset_noise_scale"_.Bind(0.01));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
 #ifdef ENVPOOL_TEST
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({4}, {-inf, inf})),
                     "info:qpos0"_.Bind(Spec<mjtNum>({2})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({2})));
-#else
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({4}, {-inf, inf})));
+                    "info:qvel0"_.Bind(Spec<mjtNum>({2})),
 #endif
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({4}, {-inf, inf}),
+                                          conf["frame_stack"_])));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -54,20 +59,40 @@ class InvertedPendulumEnvFns {
 };
 
 using InvertedPendulumEnvSpec = EnvSpec<InvertedPendulumEnvFns>;
+using InvertedPendulumPixelEnvFns =
+    PixelObservationEnvFns<InvertedPendulumEnvFns>;  // NOLINT
+using InvertedPendulumPixelEnvSpec = EnvSpec<InvertedPendulumPixelEnvFns>;
 
-class InvertedPendulumEnv : public Env<InvertedPendulumEnvSpec>,
-                            public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class InvertedPendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
+  bool reward_if_not_terminated_;
+  bool gymnasium_v5_render_camera_;
   mjtNum healthy_reward_, healthy_z_min_, healthy_z_max_;
   std::uniform_real_distribution<> dist_;
 
  public:
-  InvertedPendulumEnv(const Spec& spec, int env_id)
-      : Env<InvertedPendulumEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] +
-                      "/mujoco/assets_gym/inverted_pendulum.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  InvertedPendulumEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
+        reward_if_not_terminated_(spec.config["reward_if_not_terminated"_]),
+        gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         healthy_reward_(spec.config["healthy_reward"_]),
         healthy_z_min_(spec.config["healthy_z_min"_]),
         healthy_z_max_(spec.config["healthy_z_max"_]),
@@ -87,23 +112,44 @@ class InvertedPendulumEnv : public Env<InvertedPendulumEnvSpec>,
 #endif
   }
 
+  bool RenderCamera(mjvCamera* camera) override {
+    if (!gymnasium_v5_render_camera_) {
+      return false;
+    }
+    camera->trackbodyid = 0;
+    camera->distance = 2.04;
+    ApplyGymnasiumDefaultCameraId(camera);
+    return true;
+  }
+
   bool IsDone() override { return done_; }
 
   void Reset() override {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0);
+    WriteState(0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
+    double reward_sum = 0.0;
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
 
-    // reward and done
-    ++elapsed_step_;
-    done_ = !IsHealthy() || (elapsed_step_ >= max_episode_steps_);
-    WriteState(1.0);
+      // reward and done
+      bool terminated = !IsHealthy();
+      ++elapsed_step_;
+      done_ = terminated || (elapsed_step_ >= max_episode_steps_);
+      float reward =
+          reward_if_not_terminated_ ? static_cast<float>(!terminated) : 1.0f;
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), false);
+        break;
+      }
+    }
   }
 
  private:
@@ -124,26 +170,39 @@ class InvertedPendulumEnv : public Env<InvertedPendulumEnvSpec>,
     return true;
   }
 
-  void WriteState(float reward) {
-    State state = Allocate();
+  void WriteState(float reward, bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    for (int i = 0; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      for (int i = 0; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
+      }
+      for (int i = 0; i < model_->nv; ++i) {
+        *(obs++) = data_->qvel[i];
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < model_->nv; ++i) {
-      *(obs++) = data_->qvel[i];
-    }
-    // info
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_, model_->nq);
     state["info:qvel0"_].Assign(qvel0_, model_->nv);
 #endif
   }
 };
-
+using InvertedPendulumEnv =
+    InvertedPendulumEnvBase<InvertedPendulumEnvSpec, false>;  // NOLINT
+using InvertedPendulumPixelEnv =
+    InvertedPendulumEnvBase<InvertedPendulumPixelEnvSpec, true>;  // NOLINT
 using InvertedPendulumEnvPool = AsyncEnvPool<InvertedPendulumEnv>;
+using InvertedPendulumPixelEnvPool = AsyncEnvPool<InvertedPendulumPixelEnv>;
 
 }  // namespace mujoco_gym
 

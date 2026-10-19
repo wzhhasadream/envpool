@@ -13,235 +13,571 @@
 # limitations under the License.
 """Test for envpool.make."""
 
+import configparser
+import gc
+import os
 import pprint
-from typing import List
+import sys
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Callable, get_type_hints
+from unittest import mock
 
 import dm_env
-import gym
 import gymnasium
 from absl.testing import absltest
 
 import envpool
+from envpool.python.protocol import (
+    DMEnvPool,
+    EnvPool,
+    EnvSpec,
+    GymnasiumEnvPool,
+)
+
+_SKIP_MUJOCO_RENDER_SMOKE = (
+    os.environ.get("ENVPOOL_SKIP_MUJOCO_RENDER_SMOKE") == "1"
+)
+
+_RenderFactory = Callable[..., GymnasiumEnvPool]
+
+_GYMNASIUM_ROBOTICS_PREFIXES = (
+    "AdroitHand",
+    "Fetch",
+    "FrankaKitchen-",
+    "HandManipulate",
+    "HandReach",
+    "PointMaze_",
+)
+
+_VIZDOOM_RENDER_KWARGS: dict[str, object] = {
+    "num_envs": 1,
+    "render_width": 320,
+    "render_height": 240,
+    "use_combined_action": True,
+    "stack_num": 1,
+    "img_width": 320,
+    "img_height": 240,
+}
+
+_FAMILY_SMOKE_TASKS: dict[str, tuple[str, ...]] = {
+    "envpool.atari": ("Defender-v5",),
+    "envpool.box2d": ("LunarLander-v3",),
+    "envpool.classic_control": ("CartPole-v1",),
+    "envpool.gfootball": ("gfootball/academy_empty_goal_close-v1",),
+    "envpool.highway": ("HighwayFast-v0",),
+    "envpool.jumanji": ("Game2048-v1",),
+    "envpool.minigrid": ("MiniGrid-DoorKey-8x8-v0",),
+    "envpool.mujoco.dmc": ("WalkerWalk-v1",),
+    "envpool.mujoco.gym": ("Ant-v5",),
+    "envpool.mujoco.metaworld": ("MetaWorld/Reach-v3",),
+    "envpool.mujoco.playground": (
+        "Go1JoystickFlatTerrain-v1",
+        "G1JoystickFlatTerrain-v1",
+    ),
+    "envpool.mujoco.robotics": ("FetchReach-v4",),
+    "envpool.pgx": ("TicTacToe-v1",),
+    "envpool.procgen": ("CoinrunEasy-v0",),
+    "envpool.toy_text": ("Catch-v0",),
+    "envpool.vizdoom": ("MyWayHome-v1",),
+}
+
+_DYNAMIC_FAMILY_SMOKE_PREFIXES: dict[str, str] = {
+    "envpool.mujoco.myosuite": "MyoSuite/",
+}
+
+
+@contextmanager
+def _temporary_workdir(prefix: str) -> Iterator[str]:
+    prev_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix=prefix) as tempdir:
+        os.chdir(tempdir)
+        try:
+            yield tempdir
+        finally:
+            os.chdir(prev_cwd)
+
+
+def _emit_github_error(message: str) -> None:
+    escaped = (
+        message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    )
+    print(f"::error::{escaped}")
+
+
+def _stable_render_kwargs(task_id: str, **kwargs: object) -> dict[str, object]:
+    render_kwargs: dict[str, object] = {"render_mode": "rgb_array"}
+    if task_id == "MyWayHome-v1":
+        # Keep VizDoom release smoke aligned with the dedicated render test.
+        render_kwargs.update(_VIZDOOM_RENDER_KWARGS)
+    render_kwargs.update(kwargs)
+    return render_kwargs
 
 
 class _MakeTest(absltest.TestCase):
+    def _family_smoke_tasks(self) -> dict[str, tuple[str, ...]]:
+        from envpool.registration import registry
 
-  def test_version(self) -> None:
-    print(envpool.__version__)
+        tasks = dict(_FAMILY_SMOKE_TASKS)
+        for import_path, prefix in _DYNAMIC_FAMILY_SMOKE_PREFIXES.items():
+            candidates = sorted(
+                task_id
+                for task_id, (registered_import_path, _, _) in (
+                    registry.specs.items()
+                )
+                if registered_import_path == import_path
+                and task_id.startswith(prefix)
+            )
+            self.assertNotEmpty(candidates, import_path)
+            tasks[import_path] = (candidates[0],)
+        return tasks
 
-  def test_list_all_envs(self) -> None:
-    pprint.pprint(envpool.list_all_envs())
+    def check_render_unsupported(self, task_id: str, **kwargs: object) -> None:
+        for factory in (envpool.make_gym, envpool.make_gymnasium):
+            with self.assertRaisesRegex(RuntimeError, "render not implemented"):
+                env = factory(
+                    task_id, **_stable_render_kwargs(task_id, **kwargs)
+                )
+                try:
+                    env.reset()
+                    env.render()
+                finally:
+                    env.close()
+                    del env
+                    gc.collect()
 
-  def test_make_atari(self) -> None:
-    self.assertRaises(TypeError, envpool.make, "Pong-v5")
-    spec = envpool.make_spec("Defender-v5")
-    env_gym = envpool.make_gym("Defender-v5")
-    env_dm = envpool.make_dm("Defender-v5")
-    env_gymnasium = envpool.make_gymnasium("Defender-v5")
-    print(env_dm)
-    print(env_gym)
-    print(env_gym)
-    self.assertIsInstance(env_gymnasium, gymnasium.Env)
-    self.assertIsInstance(env_gym, gym.Env)
-    self.assertIsInstance(env_dm, dm_env.Environment)
-    self.assertEqual(spec.action_space.n, 18)
-    self.assertEqual(env_gym.action_space.n, 18)
-    self.assertEqual(env_dm.action_spec().num_values, 18)
-    self.assertEqual(env_gymnasium.action_space.n, 18)
-    # not work for wrong bin, see issue #146
-    for wrong in ["Combat", "Joust", "MazeCraze", "Warlords"]:
-      self.assertRaises(AssertionError, envpool.make_gym, f"{wrong}-v5")
-      self.assertRaises(AssertionError, envpool.make_gymnasium, f"{wrong}-v5")
-    # invalid argument will raise AssertionError, see issue #214
-    self.assertRaises(AssertionError, envpool.make_gym, "Pong-v5", seed=2**31)
-    self.assertRaises(
-      AssertionError, envpool.make_gymnasium, "Pong-v5", seed=2**31
-    )
+    def check_render(self, task_id: str, **kwargs: object) -> None:
+        def render_once(factory: _RenderFactory) -> None:
+            env = factory(task_id, **_stable_render_kwargs(task_id, **kwargs))
+            try:
+                env.reset()
+                self.assertIsNotNone(env.render())
+            finally:
+                env.close()
+                del env
+                gc.collect()
 
-  def test_make_vizdoom(self) -> None:
-    spec = envpool.make_spec("MyWayHome-v1")
-    print(spec)
-    env0 = envpool.make_gym("MyWayHome-v1")
-    env1 = envpool.make_gymnasium("MyWayHome-v1")
-    print(env0)
-    print(env1)
-    self.assertIsInstance(env0, gym.Env)
-    self.assertIsInstance(env1, gymnasium.Env)
-    env0.reset()
-    env1.reset()
+        try:
+            render_once(envpool.make_gym)
+            render_once(envpool.make_gymnasium)
+        except Exception as exc:
+            if (
+                task_id.startswith(_GYMNASIUM_ROBOTICS_PREFIXES)
+                and sys.platform in {"darwin", "win32"}
+                and "gladLoadGL" in str(exc)
+            ):
+                self.skipTest(
+                    "Gymnasium-Robotics MuJoCo offscreen rendering is "
+                    "unavailable in this runtime."
+                )
+            _emit_github_error(f"{task_id} render smoke failed: {exc}")
+            raise
 
-  def check_step(self, env_list: List[str]) -> None:
-    for task_id in env_list:
-      envpool.make_spec(task_id)
-      env_gym = envpool.make_gym(task_id)
-      env_dm = envpool.make_dm(task_id)
-      env_gymnasium = envpool.make_gymnasium(task_id)
-      print(env_dm)
-      print(env_gym)
-      print(env_gymnasium)
-      self.assertIsInstance(env_gym, gym.Env)
-      self.assertIsInstance(env_dm, dm_env.Environment)
-      self.assertIsInstance(env_gymnasium, gymnasium.Env)
-      env_dm.reset()
-      env_gym.reset()
-      env_gymnasium.reset()
+    def test_version(self) -> None:
+        config = configparser.ConfigParser()
+        self.assertTrue(config.read(Path(__file__).parents[1] / "setup.cfg"))
+        self.assertEqual(config["metadata"]["version"], envpool.__version__)
 
-  def test_make_classic(self) -> None:
-    self.check_step(
-      [
-        "CartPole-v0",
-        "CartPole-v1",
-        "Pendulum-v0",
-        "Pendulum-v1",
-        "MountainCar-v0",
-        "MountainCarContinuous-v0",
-        "Acrobot-v1",
-      ]
-    )
+    def test_asset_base_path_env_override(self) -> None:
+        from envpool.registration import asset_base_path
 
-  def test_make_toytext(self) -> None:
-    self.check_step(
-      [
-        "Catch-v0",
-        "FrozenLake-v1",
-        "FrozenLake8x8-v1",
-        "Taxi-v3",
-        "NChain-v0",
-        "CliffWalking-v0",
-        "Blackjack-v1",
-      ]
-    )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict(os.environ, {"ENVPOOL_ASSETS_PATH": tmpdir}):
+                self.assertEqual(
+                    asset_base_path("envpool_assets", "atari/roms"),
+                    os.path.abspath(tmpdir),
+                )
 
-  def test_make_box2d(self) -> None:
-    self.check_step(
-      [
-        "CarRacing-v2",
-        "BipedalWalker-v3",
-        "BipedalWalkerHardcore-v3",
-        "LunarLander-v2",
-        "LunarLanderContinuous-v2",
-      ]
-    )
+    def test_public_typing_interface(self) -> None:
+        self.assertTrue(Path(envpool.__file__).with_name("py.typed").is_file())
+        self.assertContainsSubsequence(
+            envpool.__all__,
+            [
+                "EnvSpec",
+                "EnvPool",
+                "DMEnvPool",
+                "GymnasiumEnvPool",
+            ],
+        )
+        self.assertIs(envpool.EnvSpec, EnvSpec)
+        self.assertIs(envpool.EnvPool, EnvPool)
+        self.assertIs(envpool.DMEnvPool, DMEnvPool)
+        self.assertIs(envpool.GymnasiumEnvPool, GymnasiumEnvPool)
+        self.assertIs(get_type_hints(envpool.make_spec)["return"], EnvSpec)
+        self.assertIs(get_type_hints(envpool.make_dm)["return"], DMEnvPool)
+        self.assertIs(
+            get_type_hints(envpool.make_gym)["return"],
+            GymnasiumEnvPool,
+        )
+        self.assertIs(
+            get_type_hints(envpool.make_gymnasium)["return"],
+            GymnasiumEnvPool,
+        )
 
-  def test_make_mujoco_gym(self) -> None:
-    self.check_step(
-      [
-        "Ant-v3",
-        "Ant-v4",
-        "HalfCheetah-v3",
-        "HalfCheetah-v4",
-        "Hopper-v3",
-        "Hopper-v4",
-        "Humanoid-v3",
-        "Humanoid-v4",
-        "HumanoidStandup-v2",
-        "HumanoidStandup-v4",
-        "InvertedDoublePendulum-v2",
-        "InvertedDoublePendulum-v4",
-        "InvertedPendulum-v2",
-        "InvertedPendulum-v4",
-        "Pusher-v2",
-        "Pusher-v4",
-        "Reacher-v2",
-        "Reacher-v4",
-        "Swimmer-v3",
-        "Swimmer-v4",
-        "Walker2d-v3",
-        "Walker2d-v4",
-      ]
-    )
+    def test_list_all_envs(self) -> None:
+        pprint.pprint(envpool.list_all_envs())
 
-  def test_make_mujoco_dmc(self) -> None:
-    self.check_step(
-      [
-        "AcrobotSwingup-v1",
-        "AcrobotSwingupSparse-v1",
-        "BallInCupCatch-v1",
-        "CartpoleBalance-v1",
-        "CartpoleBalanceSparse-v1",
-        "CartpoleSwingup-v1",
-        "CartpoleSwingupSparse-v1",
-        "CartpoleThreePoles-v1",
-        "CartpoleTwoPoles-v1",
-        "CheetahRun-v1",
-        "FingerSpin-v1",
-        "FingerTurnEasy-v1",
-        "FingerTurnHard-v1",
-        "FishSwim-v1",
-        "FishUpright-v1",
-        "HopperHop-v1",
-        "HopperStand-v1",
-        "HumanoidRun-v1",
-        "HumanoidRunPureState-v1",
-        "HumanoidStand-v1",
-        "HumanoidWalk-v1",
-        "HumanoidCMURun-v1",
-        "HumanoidCMUStand-v1",
-        "ManipulatorBringBall-v1",
-        "ManipulatorBringPeg-v1",
-        "ManipulatorInsertBall-v1",
-        "ManipulatorInsertPeg-v1",
-        "PendulumSwingup-v1",
-        "PointMassEasy-v1",
-        "PointMassHard-v1",
-        "ReacherEasy-v1",
-        "ReacherHard-v1",
-        "SwimmerSwimmer6-v1",
-        "SwimmerSwimmer15-v1",
-        "WalkerRun-v1",
-        "WalkerStand-v1",
-        "WalkerWalk-v1",
-      ]
-    )
+    def test_make_registered_env_families(self) -> None:
+        from envpool.registration import registry
 
-  def test_make_procgen(self) -> None:
-    self.check_step(
-      [
-        "BigfishEasy-v0",
-        "BigfishHard-v0",
-        "BossfightEasy-v0",
-        "BossfightHard-v0",
-        "CaveflyerEasy-v0",
-        "CaveflyerHard-v0",
-        "CaveflyerMemory-v0",
-        "ChaserEasy-v0",
-        "ChaserHard-v0",
-        "ChaserExtreme-v0",
-        "ClimberEasy-v0",
-        "ClimberHard-v0",
-        "CoinrunEasy-v0",
-        "CoinrunHard-v0",
-        "DodgeballEasy-v0",
-        "DodgeballHard-v0",
-        "DodgeballExtreme-v0",
-        "DodgeballMemory-v0",
-        "FruitbotEasy-v0",
-        "FruitbotHard-v0",
-        "HeistEasy-v0",
-        "HeistHard-v0",
-        "HeistMemory-v0",
-        "JumperEasy-v0",
-        "JumperHard-v0",
-        "JumperMemory-v0",
-        "LeaperEasy-v0",
-        "LeaperHard-v0",
-        "LeaperExtreme-v0",
-        "MazeEasy-v0",
-        "MazeHard-v0",
-        "MazeMemory-v0",
-        "MinerEasy-v0",
-        "MinerHard-v0",
-        "MinerMemory-v0",
-        "NinjaEasy-v0",
-        "NinjaHard-v0",
-        "PlunderEasy-v0",
-        "PlunderHard-v0",
-        "StarpilotEasy-v0",
-        "StarpilotHard-v0",
-        "StarpilotExtreme-v0",
-      ]
-    )
+        registered_import_paths = {
+            import_path for import_path, _, _ in registry.specs.values()
+        }
+        smoke_tasks = self._family_smoke_tasks()
+        self.assertEmpty(registered_import_paths - smoke_tasks.keys())
+        self.assertEmpty(smoke_tasks.keys() - registered_import_paths)
+        missing_task_ids = [
+            task_id
+            for task_ids in smoke_tasks.values()
+            for task_id in task_ids
+            if task_id not in registry.specs
+        ]
+        self.assertEmpty(missing_task_ids)
+        for import_path, task_ids in smoke_tasks.items():
+            with self.subTest(import_path=import_path):
+                self.check_step(list(task_ids))
+
+    def test_make_atari(self) -> None:
+        self.assertRaises(TypeError, envpool.make, "Pong-v5")
+        spec = envpool.make_spec("Defender-v5")
+        env_gym = envpool.make_gym("Defender-v5", render_mode="rgb_array")
+        env_dm = envpool.make_dm("Defender-v5")
+        env_gymnasium = envpool.make_gymnasium(
+            "Defender-v5", render_mode="rgb_array"
+        )
+        try:
+            print(env_dm)
+            print(env_gym)
+            print(env_gym)
+            self.assertIsInstance(env_gymnasium, gymnasium.Env)
+            self.assertIsInstance(env_gym, gymnasium.Env)
+            self.assertIsInstance(env_dm, dm_env.Environment)
+            self.assertEqual(spec.action_space.n, 18)
+            self.assertEqual(env_gym.single_action_space.n, 18)
+            self.assertEqual(env_dm.action_spec().num_values, 18)
+            self.assertEqual(env_gymnasium.single_action_space.n, 18)
+            self.assertEqual(env_gym.action_space.shape, (1,))
+            self.assertEqual(env_gymnasium.action_space.shape, (1,))
+            # not work for wrong bin, see issue #146
+            for wrong in ["Combat", "Joust", "MazeCraze", "Warlords"]:
+                self.assertRaises(
+                    AssertionError, envpool.make_gym, f"{wrong}-v5"
+                )
+                self.assertRaises(
+                    AssertionError, envpool.make_gymnasium, f"{wrong}-v5"
+                )
+            # invalid argument will raise AssertionError, see issue #214
+            self.assertRaises(
+                AssertionError, envpool.make_gym, "Pong-v5", seed=2**31
+            )
+            self.assertRaises(
+                AssertionError, envpool.make_gymnasium, "Pong-v5", seed=2**31
+            )
+        finally:
+            env_dm.close()
+            env_gym.close()
+            env_gymnasium.close()
+
+    def test_make_vizdoom(self) -> None:
+        try:
+            with _temporary_workdir(prefix="envpool-vizdoom-smoke-"):
+                spec = envpool.make_spec("MyWayHome-v1")
+                print(spec)
+                render_kwargs = _stable_render_kwargs("MyWayHome-v1")
+                env0 = envpool.make_gym("MyWayHome-v1", **render_kwargs)
+                env1 = envpool.make_gymnasium("MyWayHome-v1", **render_kwargs)
+                try:
+                    print(env0)
+                    print(env1)
+                    self.assertIsInstance(env0, gymnasium.Env)
+                    self.assertIsInstance(env1, gymnasium.Env)
+                    env0.reset()
+                    env1.reset()
+                    self.assertIsNotNone(env0.render())
+                    self.assertIsNotNone(env1.render())
+                finally:
+                    env0.close()
+                    env1.close()
+                    del env0
+                    del env1
+                    gc.collect()
+        except Exception as exc:
+            _emit_github_error(f"MyWayHome-v1 make/reset failed: {exc}")
+            raise
+
+    def check_step(self, env_list: list[str]) -> None:
+        for task_id in env_list:
+            envpool.make_spec(task_id)
+            env_gym = envpool.make_gym(task_id)
+            env_dm = envpool.make_dm(task_id)
+            env_gymnasium = envpool.make_gymnasium(task_id)
+            try:
+                print(env_dm)
+                print(env_gym)
+                print(env_gymnasium)
+                self.assertIsInstance(env_gym, gymnasium.Env)
+                self.assertIsInstance(env_dm, dm_env.Environment)
+                self.assertIsInstance(env_gymnasium, gymnasium.Env)
+                env_dm.reset()
+                env_gym.reset()
+                env_gymnasium.reset()
+            finally:
+                env_dm.close()
+                env_gym.close()
+                env_gymnasium.close()
+
+    def test_make_classic(self) -> None:
+        self.check_step([
+            "CartPole-v0",
+            "phys2d/CartPole-v0",
+            "CartPole-v1",
+            "phys2d/CartPole-v1",
+            "Pendulum-v0",
+            "phys2d/Pendulum-v0",
+            "Pendulum-v1",
+            "MountainCar-v0",
+            "MountainCarContinuous-v0",
+            "Acrobot-v1",
+        ])
+
+    def test_make_toytext(self) -> None:
+        self.check_step([
+            "Catch-v0",
+            "FrozenLake-v1",
+            "FrozenLake8x8-v1",
+            "Taxi-v3",
+            "NChain-v0",
+            "CliffWalking-v1",
+            "tabular/CliffWalking-v0",
+            "CliffWalkingSlippery-v1",
+            "CliffWalking-v0",
+            "Blackjack-v1",
+            "tabular/Blackjack-v0",
+        ])
+
+    def test_make_box2d(self) -> None:
+        self.check_step([
+            "CarRacing-v3",
+            "CarRacing-v2",
+            "BipedalWalker-v3",
+            "BipedalWalkerHardcore-v3",
+            "LunarLander-v3",
+            "LunarLander-v2",
+            "LunarLanderContinuous-v3",
+            "LunarLanderContinuous-v2",
+        ])
+
+    def test_make_minigrid(self) -> None:
+        task_ids = sorted(
+            task_id
+            for task_id in envpool.list_all_envs()
+            if task_id.startswith("MiniGrid-")
+        )
+        self.assertLen(task_ids, 81)
+        self.check_step(task_ids)
+
+    def test_make_babyai(self) -> None:
+        task_ids = sorted(
+            task_id
+            for task_id in envpool.list_all_envs()
+            if task_id.startswith("BabyAI-")
+        )
+        self.assertLen(task_ids, 96)
+        self.check_step(task_ids)
+
+    def test_make_gfootball(self) -> None:
+        task_ids = sorted(
+            task_id
+            for task_id in envpool.list_all_envs()
+            if task_id.startswith("gfootball/")
+        )
+        self.assertLen(task_ids, 18)
+        self.check_step(task_ids)
+        self.check_render_unsupported("gfootball/11_vs_11_stochastic-v1")
+
+    def test_make_gymnasium_robotics(self) -> None:
+        task_ids = sorted(
+            task_id
+            for task_id in envpool.list_all_envs()
+            if task_id.startswith(_GYMNASIUM_ROBOTICS_PREFIXES)
+        )
+        self.assertLen(task_ids, 157)
+        self.check_step(task_ids)
+
+    def test_make_mujoco_gym(self) -> None:
+        self.check_step([
+            "Ant-v3",
+            "Ant-v4",
+            "Ant-v5",
+            "HalfCheetah-v3",
+            "HalfCheetah-v4",
+            "HalfCheetah-v5",
+            "Hopper-v3",
+            "Hopper-v4",
+            "Hopper-v5",
+            "Humanoid-v3",
+            "Humanoid-v4",
+            "Humanoid-v5",
+            "HumanoidStandup-v2",
+            "HumanoidStandup-v4",
+            "HumanoidStandup-v5",
+            "InvertedDoublePendulum-v2",
+            "InvertedDoublePendulum-v4",
+            "InvertedDoublePendulum-v5",
+            "InvertedPendulum-v2",
+            "InvertedPendulum-v4",
+            "InvertedPendulum-v5",
+            "Pusher-v2",
+            "Pusher-v4",
+            "Pusher-v5",
+            "Reacher-v2",
+            "Reacher-v4",
+            "Reacher-v5",
+            "Swimmer-v3",
+            "Swimmer-v4",
+            "Swimmer-v5",
+            "Walker2d-v3",
+            "Walker2d-v4",
+            "Walker2d-v5",
+        ])
+
+    def test_make_mujoco_dmc(self) -> None:
+        self.check_step([
+            "AcrobotSwingup-v1",
+            "AcrobotSwingupSparse-v1",
+            "BallInCupCatch-v1",
+            "CartpoleBalance-v1",
+            "CartpoleBalanceSparse-v1",
+            "CartpoleSwingup-v1",
+            "CartpoleSwingupSparse-v1",
+            "CartpoleThreePoles-v1",
+            "CartpoleTwoPoles-v1",
+            "CheetahRun-v1",
+            "DogFetch-v1",
+            "DogRun-v1",
+            "DogStand-v1",
+            "DogTrot-v1",
+            "DogWalk-v1",
+            "FingerSpin-v1",
+            "FingerTurnEasy-v1",
+            "FingerTurnHard-v1",
+            "FishSwim-v1",
+            "FishUpright-v1",
+            "HopperHop-v1",
+            "HopperStand-v1",
+            "HumanoidRun-v1",
+            "HumanoidRunPureState-v1",
+            "HumanoidStand-v1",
+            "HumanoidWalk-v1",
+            "HumanoidCMURun-v1",
+            "HumanoidCMUStand-v1",
+            "HumanoidCMUWalk-v1",
+            "LqrLqr21-v1",
+            "LqrLqr62-v1",
+            "ManipulatorBringBall-v1",
+            "ManipulatorBringPeg-v1",
+            "ManipulatorInsertBall-v1",
+            "ManipulatorInsertPeg-v1",
+            "PendulumSwingup-v1",
+            "PointMassEasy-v1",
+            "PointMassHard-v1",
+            "QuadrupedEscape-v1",
+            "QuadrupedFetch-v1",
+            "QuadrupedRun-v1",
+            "QuadrupedWalk-v1",
+            "ReacherEasy-v1",
+            "ReacherHard-v1",
+            "StackerStack2-v1",
+            "StackerStack4-v1",
+            "SwimmerSwimmer6-v1",
+            "SwimmerSwimmer15-v1",
+            "WalkerRun-v1",
+            "WalkerStand-v1",
+            "WalkerWalk-v1",
+        ])
+
+    def test_make_mujoco_playground(self) -> None:
+        self.check_step([
+            "Go1JoystickFlatTerrain-v1",
+        ])
+
+    def test_render_smoke(self) -> None:
+        self.check_render("CartPole-v1")
+        self.check_render("LunarLander-v3")
+        self.check_render("BabyAI-GoToObj-v0")
+        self.check_render("MiniGrid-DoorKey-8x8-v0")
+        self.check_render(
+            "Defender-v5",
+            gray_scale=False,
+            stack_num=1,
+            img_height=210,
+            img_width=160,
+            use_inter_area_resize=False,
+        )
+        self.check_render("MyWayHome-v1")
+        self.check_render("CoinrunHard-v0")
+        if not _SKIP_MUJOCO_RENDER_SMOKE:
+            self.check_render("Ant-v5")
+            self.check_render("WalkerWalk-v1")
+            if "FetchReach-v4" in envpool.list_all_envs():
+                self.check_render("FetchReach-v4")
+
+    def test_make_procgen(self) -> None:
+        self.check_step([
+            "BigfishEasy-v0",
+            "BigfishHard-v0",
+            "BossfightEasy-v0",
+            "BossfightHard-v0",
+            "CaveflyerEasy-v0",
+            "CaveflyerExploration-v0",
+            "CaveflyerHard-v0",
+            "CaveflyerMemory-v0",
+            "ChaserEasy-v0",
+            "ChaserHard-v0",
+            "ChaserExtreme-v0",
+            "ClimberEasy-v0",
+            "ClimberExploration-v0",
+            "ClimberHard-v0",
+            "CoinrunEasy-v0",
+            "CoinrunExploration-v0",
+            "CoinrunHard-v0",
+            "DodgeballEasy-v0",
+            "DodgeballHard-v0",
+            "DodgeballExtreme-v0",
+            "DodgeballMemory-v0",
+            "FruitbotEasy-v0",
+            "FruitbotHard-v0",
+            "HeistEasy-v0",
+            "HeistExploration-v0",
+            "HeistHard-v0",
+            "HeistMemory-v0",
+            "JumperEasy-v0",
+            "JumperExploration-v0",
+            "JumperHard-v0",
+            "JumperMemory-v0",
+            "LeaperEasy-v0",
+            "LeaperExploration-v0",
+            "LeaperHard-v0",
+            "LeaperExtreme-v0",
+            "MazeEasy-v0",
+            "MazeExploration-v0",
+            "MazeHard-v0",
+            "MazeMemory-v0",
+            "MinerEasy-v0",
+            "MinerHard-v0",
+            "MinerMemory-v0",
+            "NinjaEasy-v0",
+            "NinjaExploration-v0",
+            "NinjaHard-v0",
+            "PlunderEasy-v0",
+            "PlunderHard-v0",
+            "StarpilotEasy-v0",
+            "StarpilotHard-v0",
+            "StarpilotExtreme-v0",
+        ])
 
 
 if __name__ == "__main__":
-  absltest.main()
+    absltest.main()

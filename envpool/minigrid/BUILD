@@ -12,31 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "minigrid_env",
     srcs = [
-        "impl/minigrid_empty_env.cc",
+        "impl/babyai_core.cc",
+        "impl/babyai_env.cc",
+        "impl/babyai_goto_tasks.cc",
+        "impl/babyai_instr.cc",
+        "impl/babyai_open_tasks.cc",
+        "impl/babyai_pickup_tasks.cc",
+        "impl/babyai_tasks.cc",
+        "impl/babyai_unlock_tasks.cc",
+        "impl/minigrid_core.cc",
         "impl/minigrid_env.cc",
+        "impl/minigrid_render.cc",
+        "impl/minigrid_room_tasks.cc",
+        "impl/minigrid_task_factory.cc",
+        "impl/minigrid_tasks.cc",
+        "impl/minigrid_wfc_tasks.cc",
     ],
     hdrs = [
-        "empty.h",
-        "impl/minigrid_empty_env.h",
+        "impl/babyai_core.h",
+        "impl/babyai_env.h",
+        "impl/babyai_task_factory.h",
         "impl/minigrid_env.h",
+        "impl/minigrid_task_factory.h",
+        "impl/minigrid_task_utils.h",
         "impl/utils.h",
+        "minigrid.h",
     ],
     deps = [
         "//envpool/core:async_envpool",
+        "//envpool/core:logging",
+        "@opencv",
     ],
 )
 
 pybind_extension(
     name = "minigrid_envpool",
-    srcs = ["minigrid.cc"],
+    srcs = [
+        "minigrid.cc",
+        "minigrid_bindings.cc",
+    ],
     deps = [
         ":minigrid_env",
         "//envpool/core:py_envpool",
@@ -46,15 +70,74 @@ pybind_extension(
 py_library(
     name = "minigrid",
     srcs = ["__init__.py"],
-    data = [":minigrid_envpool.so"],
-    deps = ["//envpool/python:api"],
+    data = [":minigrid_envpool"],
+    imports = ["../.."],
+    deps = [
+        "//envpool/python:api",
+        requirement("numpy"),
+    ],
 )
 
 py_library(
     name = "minigrid_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = [
         "//envpool:registration",
+    ],
+)
+
+py_test(
+    name = "babyai_align_test",
+    size = "enormous",
+    srcs = [
+        "babyai_align_test.py",
+        "babyai_test_utils.py",
+    ],
+    imports = ["../.."],
+    deps = [
+        ":minigrid",
+        ":minigrid_registration",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("minigrid"),
+    ],
+)
+
+py_test(
+    name = "babyai_deterministic_test",
+    size = "enormous",
+    srcs = [
+        "babyai_deterministic_test.py",
+        "babyai_test_utils.py",
+    ],
+    imports = ["../.."],
+    deps = [
+        ":minigrid",
+        ":minigrid_registration",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("minigrid"),
+    ],
+)
+
+py_test(
+    name = "babyai_render_test",
+    size = "enormous",
+    srcs = [
+        "babyai_render_test.py",
+        "babyai_test_utils.py",
+    ],
+    imports = ["../.."],
+    deps = [
+        ":minigrid",
+        ":minigrid_registration",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("minigrid"),
     ],
 )
 
@@ -62,11 +145,12 @@ py_test(
     name = "minigrid_align_test",
     size = "enormous",
     srcs = ["minigrid_align_test.py"],
+    imports = ["../.."],
     deps = [
         ":minigrid",
         ":minigrid_registration",
         requirement("absl-py"),
-        requirement("gym"),
+        requirement("gymnasium"),
         requirement("numpy"),
         requirement("minigrid"),
     ],
@@ -76,11 +160,39 @@ py_test(
     name = "minigrid_deterministic_test",
     size = "enormous",
     srcs = ["minigrid_deterministic_test.py"],
+    imports = ["../.."],
     deps = [
         ":minigrid",
         ":minigrid_registration",
         requirement("absl-py"),
-        requirement("gym"),
+        requirement("gymnasium"),
         requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "minigrid_xla_test",
+    size = "large",
+    srcs = ["minigrid_xla_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":minigrid",
+        requirement("absl-py"),
+        requirement("jax"),
+    ],
+)
+
+py_test(
+    name = "minigrid_render_test",
+    size = "enormous",
+    srcs = ["minigrid_render_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":minigrid",
+        ":minigrid_registration",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("minigrid"),
     ],
 )

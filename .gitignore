@@ -106,12 +106,12 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.venv
-venv/
-ENV/
-env.bak/
-venv.bak/
+/.env
+/.venv
+/venv/
+/ENV/
+/env.bak/
+/venv.bak/
 
 # Spyder project settings
 .spyderproject
@@ -148,3 +148,11 @@ log
 _vizdoom*
 MUJOCO_LOG.TXT
 .vscode/
+plan.md
+# Generated from the pinned HumanoidBench asset package.
+envpool/mujoco/humanoid_bench/assets/
+envpool/mujoco/humanoid_bench/mujoco_licenses/
+envpool.libs/
+third_party/humanoid_bench/libmujoco.so.*
+envpool/vizdoom/bin/vizdoom
+envpool/vizdoom/bin/vizdoom.pk3

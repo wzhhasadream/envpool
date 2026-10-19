@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -56,15 +58,33 @@ pybind_extension(
 py_library(
     name = "box2d",
     srcs = ["__init__.py"],
-    data = [":box2d_envpool.so"],
+    data = [":box2d_envpool"],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
 py_library(
     name = "box2d_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = [
         "//envpool:registration",
+    ],
+)
+
+py_test(
+    name = "box2d_align_test",
+    size = "enormous",
+    srcs = ["box2d_align_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":box2d",
+        ":box2d_registration",
+        requirement("absl-py"),
+        requirement("box2d"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("pygame"),
     ],
 )
 
@@ -72,6 +92,7 @@ py_test(
     name = "box2d_deterministic_test",
     size = "enormous",
     srcs = ["box2d_deterministic_test.py"],
+    imports = ["../.."],
     deps = [
         ":box2d",
         ":box2d_registration",
@@ -81,17 +102,33 @@ py_test(
 )
 
 py_test(
-    name = "box2d_correctness_test",
+    name = "box2d_render_test",
     size = "enormous",
-    srcs = ["box2d_correctness_test.py"],
+    srcs = ["box2d_render_test.py"],
+    imports = ["../.."],
     deps = [
         ":box2d",
         ":box2d_registration",
         requirement("absl-py"),
-        requirement("gym"),
-        requirement("box2d-py"),
+        requirement("box2d"),
+        requirement("gymnasium"),
+        requirement("numpy"),
         requirement("pygame"),
-        requirement("opencv-python-headless"),
+    ],
+)
+
+py_test(
+    name = "box2d_correctness_test",
+    size = "enormous",
+    srcs = ["box2d_correctness_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":box2d",
+        ":box2d_registration",
+        requirement("absl-py"),
+        requirement("box2d"),
+        requirement("gymnasium"),
+        requirement("pygame"),
         requirement("numpy"),
     ],
 )

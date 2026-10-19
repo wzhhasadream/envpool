@@ -15,22 +15,23 @@
 
 import os
 
-from envpool.registration import base_path, register
+from envpool.registration import asset_base_path, register
 
-atari_rom_path = os.path.join(base_path, "atari", "roms")
-atari_game_list = sorted(
-  [i.replace(".bin", "") for i in os.listdir(atari_rom_path)]
-)
+_ATARI_BASE_PATH = asset_base_path("envpool_assets", "atari/roms")
+atari_rom_path = os.path.join(_ATARI_BASE_PATH, "atari", "roms")
+atari_game_list = sorted([
+    i.replace(".bin", "") for i in os.listdir(atari_rom_path)
+])
 
 for game in atari_game_list:
-  name = "".join([g.capitalize() for g in game.split("_")])
-  register(
-    task_id=name + "-v5",
-    import_path="envpool.atari",
-    spec_cls="AtariEnvSpec",
-    dm_cls="AtariDMEnvPool",
-    gym_cls="AtariGymEnvPool",
-    gymnasium_cls="AtariGymnasiumEnvPool",
-    task=game,
-    max_episode_steps=27000,
-  )
+    name = "".join([g.capitalize() for g in game.split("_")])
+    register(
+        task_id=name + "-v5",
+        import_path="envpool.atari",
+        spec_cls="AtariEnvSpec",
+        dm_cls="AtariDMEnvPool",
+        gymnasium_cls="AtariGymnasiumEnvPool",
+        task=game,
+        max_episode_steps=27000,
+        base_path=_ATARI_BASE_PATH,
+    )

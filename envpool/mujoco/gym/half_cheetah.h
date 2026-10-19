@@ -32,25 +32,32 @@ class HalfCheetahEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("reward_threshold"_.Bind(4800.0), "frame_skip"_.Bind(5),
+                    "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
                     "post_constraint"_.Bind(true),
                     "exclude_current_positions_from_observation"_.Bind(true),
+                    "xml_file"_.Bind(std::string("half_cheetah.xml")),
+                    "gymnasium_v5_render_camera"_.Bind(false),
                     "ctrl_cost_weight"_.Bind(0.1),
                     "forward_reward_weight"_.Bind(1.0),
                     "reset_noise_scale"_.Bind(0.1));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     bool no_pos = conf["exclude_current_positions_from_observation"_];
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({no_pos ? 17 : 18}, {-inf, inf})),
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs"_.Bind(StackSpec(Spec<mjtNum>({no_pos ? 17 : 18}, {-inf, inf}),
+                              conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
-                    "info:qpos0"_.Bind(Spec<mjtNum>({9})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({9})),
+        "info:qpos0"_.Bind(Spec<mjtNum>({9})),
+        "info:qvel0"_.Bind(Spec<mjtNum>({9})),
 #endif
-                    "info:reward_run"_.Bind(Spec<mjtNum>({-1})),
-                    "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})),
-                    "info:x_position"_.Bind(Spec<mjtNum>({-1})),
-                    "info:x_velocity"_.Bind(Spec<mjtNum>({-1})));
+        "info:reward_run"_.Bind(Spec<mjtNum>({-1})),
+        "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})),
+        "info:x_position"_.Bind(Spec<mjtNum>({-1})),
+        "info:x_velocity"_.Bind(Spec<mjtNum>({-1})));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -59,22 +66,40 @@ class HalfCheetahEnvFns {
 };
 
 using HalfCheetahEnvSpec = EnvSpec<HalfCheetahEnvFns>;
+using HalfCheetahPixelEnvFns = PixelObservationEnvFns<HalfCheetahEnvFns>;
+using HalfCheetahPixelEnvSpec = EnvSpec<HalfCheetahPixelEnvFns>;
 
-class HalfCheetahEnv : public Env<HalfCheetahEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class HalfCheetahEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
   bool no_pos_;
+  bool gymnasium_v5_render_camera_;
   mjtNum ctrl_cost_weight_, forward_reward_weight_;
   std::uniform_real_distribution<> dist_qpos_;
   std::normal_distribution<> dist_qvel_;
 
  public:
-  HalfCheetahEnv(const Spec& spec, int env_id)
-      : Env<HalfCheetahEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  HalfCheetahEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
-            spec.config["base_path"_] + "/mujoco/assets_gym/half_cheetah.xml",
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
             spec.config["frame_skip"_], spec.config["post_constraint"_],
-            spec.config["max_episode_steps"_]),
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
+        gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
         forward_reward_weight_(spec.config["forward_reward_weight"_]),
         dist_qpos_(-spec.config["reset_noise_scale"_],
@@ -94,49 +119,77 @@ class HalfCheetahEnv : public Env<HalfCheetahEnvSpec>, public MujocoEnv {
 #endif
   }
 
+  bool RenderCamera(mjvCamera* camera) override {
+    if (!gymnasium_v5_render_camera_) {
+      return false;
+    }
+    camera->distance = 4.0;
+    ApplyGymnasiumDefaultCameraId(camera);
+    return true;
+  }
+
   bool IsDone() override { return done_; }
 
   void Reset() override {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0, 0.0, 0.0, 0.0);
+    WriteState(0.0, 0.0, 0.0, 0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum x_before = data_->qpos[0];
-    MujocoStep(act);
-    mjtNum x_after = data_->qpos[0];
+    double reward_sum = 0.0;
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum x_before = data_->qpos[0];
+      MujocoStep(act);
+      mjtNum x_after = data_->qpos[0];
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+      // xv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (x_after - x_before) / dt;
+      // reward and done
+      auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, ctrl_cost, x_after,
+                   false);
+        break;
+      }
     }
-    // xv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (x_after - x_before) / dt;
-    // reward and done
-    auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, ctrl_cost, x_after);
   }
 
  private:
-  void WriteState(float reward, mjtNum xv, mjtNum ctrl_cost, mjtNum x_after) {
-    State state = Allocate();
+  void WriteState(float reward, mjtNum xv, mjtNum ctrl_cost, mjtNum x_after,
+                  bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    for (int i = no_pos_ ? 1 : 0; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      for (int i = no_pos_ ? 1 : 0; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
+      }
+      for (int i = 0; i < model_->nv; ++i) {
+        *(obs++) = data_->qvel[i];
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < model_->nv; ++i) {
-      *(obs++) = data_->qvel[i];
-    }
-    // info
     state["info:reward_run"_] = xv * forward_reward_weight_;
     state["info:reward_ctrl"_] = -ctrl_cost;
     state["info:x_position"_] = x_after;
@@ -148,7 +201,10 @@ class HalfCheetahEnv : public Env<HalfCheetahEnvSpec>, public MujocoEnv {
   }
 };
 
+using HalfCheetahEnv = HalfCheetahEnvBase<HalfCheetahEnvSpec, false>;
+using HalfCheetahPixelEnv = HalfCheetahEnvBase<HalfCheetahPixelEnvSpec, true>;
 using HalfCheetahEnvPool = AsyncEnvPool<HalfCheetahEnv>;
+using HalfCheetahPixelEnvPool = AsyncEnvPool<HalfCheetahPixelEnv>;
 
 }  // namespace mujoco_gym
 

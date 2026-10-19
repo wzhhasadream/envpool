@@ -1,8 +1,21 @@
 ViZDoom
 =======
 
-We use ``vizdoom==1.1.13`` as the codebase. See
-https://github.com/mwydmuch/ViZDoom/tree/1.1.13
+We use ``vizdoom==1.3.0`` as the codebase. See
+https://github.com/Farama-Foundation/ViZDoom/tree/1.3.0
+
+
+Render Compare
+--------------
+
+Representative first-frame compares for VizDoom tasks. In each panel, EnvPool
+is on the left and the exact screen-buffer oracle used by the test suite is on
+the right. Scenarios that cannot be rendered stably in the current local test
+setup are shown as placeholders.
+
+.. image:: ../_static/render_samples/vizdoom_oracle_compare.png
+    :width: 900px
+    :align: center
 
 
 Env Wrappers
@@ -21,7 +34,9 @@ Options
   ``num_envs``;
 * ``num_threads (int)``: the maximum thread number for executing the actual
   ``env.step``, default to ``batch_size``;
-* ``seed (int)``: the environment seed, default to ``42``;
+* ``seed (int | Sequence[int])``: the environment seed. When a sequence is
+  provided, it must contain exactly one seed per environment. Default to
+  ``42``;
 * ``max_episode_steps (int)``: the maximum number of steps for one episode,
   default to ``525``;
 * ``img_height (int)``: the desired observation image height, default to
@@ -51,10 +66,10 @@ Options
 * ``iwad_path (str)``: the rendering resource package path, default to
   ``vizdoom/bin/freedoom2``;
 * ``map_id (str)``: the vizdoom map id, see `setDoomMap
-  <https://github.com/mwydmuch/ViZDoom/blob/master/doc/DoomGame.md#setDoomMap>`_,
+  <https://github.com/Farama-Foundation/ViZDoom/blob/1.3.0/doc/DoomGame.md#setDoomMap>`_,
   available options are ``"map01", "map02", ...``, default to ``"map01"``;
 * ``game_args (str)``: the args string for vizdoom game, see `addGameArgs
-  <https://github.com/mwydmuch/ViZDoom/blob/master/doc/DoomGame.md#addGameArgs>`_,
+  <https://github.com/Farama-Foundation/ViZDoom/blob/1.3.0/doc/DoomGame.md#addGameArgs>`_,
   default to ``""``;
 * ``reward_config (Dict[str, Tuple[float, float]])``: how to calculate the
   reward (see below), default to ``{"FRAGCOUNT": [1, -1.5], "KILLCOUNT": [1, 0],

@@ -20,46 +20,111 @@
 #include <mjxmacro.h>
 #include <mujoco.h>
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
+
+#include "envpool/core/env.h"
+#include "envpool/mujoco/frame_stack.h"
+#include "envpool/mujoco/offscreen_renderer.h"
 
 namespace mujoco_gym {
 
-class MujocoEnv {
+using envpool::mujoco::PixelObservationEnvFns;
+using envpool::mujoco::RenderCameraIdOrDefault;
+using envpool::mujoco::RenderHeightOrDefault;
+using envpool::mujoco::RenderWidthOrDefault;
+using envpool::mujoco::StackSpec;
+
+// StateSpec validates this before the environment pool starts its workers.
+inline void ValidateActionRepeat(int action_repeat) {
+  if (action_repeat < 1) {
+    throw std::invalid_argument("action_repeat must be positive");
+  }
+}
+
+class MujocoEnv : public RenderableEnv {
  private:
   std::array<char, 1000> error_;
+  std::string xml_path_;
+
+  static std::string ResolveXMLPath(const std::string& xml) {
+    auto ext = xml.rfind(".xml");
+    if (ext == std::string::npos) {
+      return xml;
+    }
+    std::string patched = xml.substr(0, ext) + "_envpool.xml";
+    std::ifstream stream(patched);
+    return stream.good() ? patched : xml;
+  }
 
  protected:
   mjModel* model_;
-  mjData* data_;
-  mjtNum *init_qpos_, *init_qvel_;
+  mjData* data_{nullptr};
+  mjtNum *init_qpos_{nullptr}, *init_qvel_{nullptr};
 #ifdef ENVPOOL_TEST
-  mjtNum *qpos0_, *qvel0_;  // for align check
+  mjtNum *qpos0_{nullptr}, *qvel0_{nullptr};  // for align check
 #endif
   int frame_skip_;
+  // Repeat whole control steps without changing the physics frame skip.
+  int action_repeat_;
+  float per_timestep_reward_{0.0f};
+  int frame_stack_;
   bool post_constraint_;
   int max_episode_steps_, elapsed_step_;
   bool done_{true};
+  std::unique_ptr<envpool::mujoco::OffscreenRenderer> renderer_;
+  envpool::mujoco::FrameStackBuffer frame_stack_buffer_;
+  envpool::mujoco::PixelFrameStackBuffer pixel_frame_stack_buffer_;
+  int render_width_, render_height_, render_camera_id_;
+  std::vector<uint8_t> cached_render_;
+  bool has_cached_render_{false};
+  int cached_render_width_{0};
+  int cached_render_height_{0};
+  int cached_render_camera_id_{0};
 
  public:
   MujocoEnv(const std::string& xml, int frame_skip, bool post_constraint,
-            int max_episode_steps)
-      : model_(mj_loadXML(xml.c_str(), nullptr, error_.begin(), 1000)),
-        data_(mj_makeData(model_)),
-        init_qpos_(new mjtNum[model_->nq]),
-        init_qvel_(new mjtNum[model_->nv]),
-#ifdef ENVPOOL_TEST
-        qpos0_(new mjtNum[model_->nq]),
-        qvel0_(new mjtNum[model_->nv]),
-#endif
+            int max_episode_steps, int frame_stack, int render_width = 84,
+            int render_height = 84, int render_camera_id = -1,
+            int action_repeat = 1)
+      : xml_path_(ResolveXMLPath(xml)),
+        model_(mj_loadXML(xml_path_.c_str(), nullptr, error_.data(), 1000)),
         frame_skip_(frame_skip),
+        action_repeat_(action_repeat),
+        frame_stack_(frame_stack),
         post_constraint_(post_constraint),
         max_episode_steps_(max_episode_steps),
-        elapsed_step_(max_episode_steps + 1) {
+        elapsed_step_(max_episode_steps + 1),
+        frame_stack_buffer_(frame_stack),
+        pixel_frame_stack_buffer_(frame_stack),
+        render_width_(render_width),
+        render_height_(render_height),
+        render_camera_id_(render_camera_id) {
+    if (model_ == nullptr) {
+      throw std::runtime_error(error_.data());
+    }
+    if (frame_stack_ < 1) {
+      throw std::invalid_argument("frame_stack must be greater than 0");
+    }
+    data_ = mj_makeData(model_);
+    init_qpos_ = new mjtNum[model_->nq];
+    init_qvel_ = new mjtNum[model_->nv];
+#ifdef ENVPOOL_TEST
+    qpos0_ = new mjtNum[model_->nq];
+    qvel0_ = new mjtNum[model_->nv];
+#endif
     std::memcpy(init_qpos_, data_->qpos, sizeof(mjtNum) * model_->nq);
     std::memcpy(init_qvel_, data_->qvel, sizeof(mjtNum) * model_->nv);
   }
 
-  ~MujocoEnv() {
+  ~MujocoEnv() override {
     mj_deleteData(data_);
     mj_deleteModel(model_);
     delete[] init_qpos_;
@@ -71,6 +136,7 @@ class MujocoEnv {
   }
 
   void MujocoReset() {
+    has_cached_render_ = false;
     mj_resetData(model_, data_);
     MujocoResetModel();
     mj_forward(model_, data_);
@@ -81,6 +147,7 @@ class MujocoEnv {
   }
 
   void MujocoStep(const mjtNum* action) {
+    has_cached_render_ = false;
     for (int i = 0; i < model_->nu; ++i) {
       data_->ctrl[i] = action[i];
     }
@@ -90,6 +157,124 @@ class MujocoEnv {
     if (post_constraint_) {
       mj_rnePostConstraint(model_, data_);
     }
+  }
+
+  void RenderFresh(int width, int height, int camera_id, unsigned char* rgb) {
+    mjvCamera camera_override;
+    InitializeRenderCamera(&camera_override);
+    mjvCamera* camera =
+        RenderCamera(&camera_override) ? &camera_override : nullptr;
+#ifdef _WIN32
+    // Native pixel observations are rendered on worker threads, while env
+    // teardown happens on the Python thread. Recreating the renderer on
+    // Windows avoids cross-thread WGL resource lifetime issues.
+    envpool::mujoco::OffscreenRenderer renderer(
+        envpool::mujoco::CameraPolicy::kGymLike);
+    renderer.Render(model_, data_, width, height, camera_id, rgb, camera);
+#else
+    if (renderer_ == nullptr) {
+      renderer_ = std::make_unique<envpool::mujoco::OffscreenRenderer>(
+          envpool::mujoco::CameraPolicy::kGymLike,
+          /*disable_auxiliary_visuals=*/false, /*share_cgl_context=*/false,
+          /*prefer_offline_cgl_context=*/false, /*resize_offscreen=*/true);
+    }
+    renderer_->Render(model_, data_, width, height, camera_id, rgb, camera);
+#endif
+  }
+
+  bool CopyCachedRender(int width, int height, int camera_id,
+                        unsigned char* rgb) const {
+    if (!has_cached_render_ || cached_render_width_ != width ||
+        cached_render_height_ != height ||
+        cached_render_camera_id_ != camera_id) {
+      return false;
+    }
+    std::memcpy(rgb, cached_render_.data(), cached_render_.size());
+    return true;
+  }
+
+  void UpdateCachedRender(int width, int height, int camera_id,
+                          const unsigned char* rgb) {
+    std::size_t render_size = static_cast<std::size_t>(width) * height * 3;
+    cached_render_.assign(rgb, rgb + render_size);
+    has_cached_render_ = true;
+    cached_render_width_ = width;
+    cached_render_height_ = height;
+    cached_render_camera_id_ = camera_id;
+  }
+
+  void Render(int width, int height, int camera_id,
+              unsigned char* rgb) override {
+    if (CopyCachedRender(width, height, camera_id, rgb)) {
+      return;
+    }
+    RenderFresh(width, height, camera_id, rgb);
+  }
+
+  std::pair<int, int> RenderSize(int width, int height) const override {
+    return {width > 0 ? width : 480, height > 0 ? height : 480};
+  }
+
+ protected:
+  static mjtNum MedianGeomPosition(const mjData* data, int ngeom, int axis) {
+    std::vector<mjtNum> positions(ngeom);
+    for (int geom_id = 0; geom_id < ngeom; ++geom_id) {
+      positions[geom_id] = data->geom_xpos[geom_id * 3 + axis];
+    }
+    std::sort(positions.begin(), positions.end());
+    int mid = ngeom / 2;
+    if (ngeom % 2 == 0) {
+      return (positions[mid - 1] + positions[mid]) * static_cast<mjtNum>(0.5);
+    }
+    return positions[mid];
+  }
+
+  virtual bool RenderCamera(mjvCamera* camera) {
+    (void)camera;
+    return false;
+  }
+
+  void InitializeRenderCamera(mjvCamera* camera) const {
+    mjv_defaultCamera(camera);
+    camera->type = mjCAMERA_FREE;
+    camera->fixedcamid = -1;
+    camera->trackbodyid = -1;
+    camera->distance = model_->stat.extent;
+    if (model_->ngeom == 0) {
+      return;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      camera->lookat[axis] = MedianGeomPosition(data_, model_->ngeom, axis);
+    }
+  }
+
+  void ApplyGymnasiumDefaultCameraId(mjvCamera* camera) const {
+    int track_camera_id = mj_name2id(model_, mjOBJ_CAMERA, "track");
+    if (track_camera_id >= 0) {
+      camera->type = mjCAMERA_FIXED;
+      camera->fixedcamid = track_camera_id;
+      return;
+    }
+    camera->type = mjCAMERA_FREE;
+    camera->fixedcamid = -1;
+  }
+
+  mjtNum* PrepareObservation(Array* target) {
+    return frame_stack_buffer_.Prepare("obs", target);
+  }
+
+  void CommitObservation(Array* target, bool reset) {
+    frame_stack_buffer_.Commit("obs", target, reset);
+  }
+
+  void AssignPixelObservation(Array* target, bool reset) {
+    uint8_t* scratch = pixel_frame_stack_buffer_.Prepare(
+        "obs:pixels", render_width_, render_height_);
+    RenderFresh(render_width_, render_height_, render_camera_id_, scratch);
+    UpdateCachedRender(render_width_, render_height_, render_camera_id_,
+                       scratch);
+    pixel_frame_stack_buffer_.Commit("obs:pixels", target, render_width_,
+                                     render_height_, reset);
   }
 };
 

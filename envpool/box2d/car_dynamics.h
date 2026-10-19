@@ -18,9 +18,11 @@
 #ifndef ENVPOOL_BOX2D_CAR_DYNAMICS_H_
 #define ENVPOOL_BOX2D_CAR_DYNAMICS_H_
 
-#include <box2d/box2d.h>
+#include <Box2D/Box2D.h>
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <random>
@@ -34,41 +36,49 @@
 
 namespace box2d {
 
-static const float kSize = 0.02;
-static const float kEnginePower = 100000000.0f * kSize * kSize;
-static const float kWheelMomentOfInertia = 4000.0f * kSize * kSize;
-static const float kFrictionLimit = 1000000.0f * kSize * kSize;
-static const float kWheelR = 27;
-static const float kWheelW = 14;
-static const float kBrakeForce = 15;    // radians per second
-static const float kWheelPos[4][2] = {  // NOLINT
+inline constexpr float kSize = 0.02f;
+inline constexpr float kEnginePower = 100000000.0f * kSize * kSize;
+inline constexpr float kWheelMomentOfInertia = 4000.0f * kSize * kSize;
+inline constexpr float kFrictionLimit = 1000000.0f * kSize * kSize;
+inline constexpr float kWheelR = 27;
+inline constexpr float kWheelW = 14;
+// clang-format off
+inline constexpr float kBrakeForce = 15;  // radians per second
+inline constexpr std::array<std::array<float, 2>, 4> kWheelPos = {{
     {-55, 80},
     {55, 80},
     {-55, -82},
-    {55, -82}};
-static const float kHullPoly1[4][2] = {  // NOLINT
+    {55, -82},
+}};
+inline constexpr std::array<std::array<float, 2>, 4> kHullPoly1 = {{
     {-60, 130},
     {60, 130},
     {60, 110},
-    {-60, 110}};
-static const float kHullPoly2[4][2] = {  // NOLINT
+    {-60, 110},
+}};
+inline constexpr std::array<std::array<float, 2>, 4> kHullPoly2 = {{
     {-15, 120},
     {15, 120},
     {20, 20},
-    {-20, 20}};
-static const float kHullPoly3[8][2] = {  // NOLINT
+    {-20, 20},
+}};
+inline constexpr std::array<std::array<float, 2>, 8> kHullPoly3 = {{
     {25, 20},   {50, -10},  {50, -40},  {20, -90},
-    {-20, -90}, {-50, -40}, {-50, -10}, {-25, 20}};
-static const float kHullPoly4[4][2] = {  // NOLINT
+    {-20, -90}, {-50, -40}, {-50, -10}, {-25, 20},
+}};
+inline constexpr std::array<std::array<float, 2>, 4> kHullPoly4 = {{
     {-50, -120},
     {50, -120},
     {50, -90},
-    {-50, -90}};
-static const float kWheelPoly[4][2] = {  // NOLINT
+    {-50, -90},
+}};
+inline constexpr std::array<std::array<float, 2>, 4> kWheelPoly = {{
     {-kWheelW, +kWheelR},
     {+kWheelW, +kWheelR},
     {+kWheelW, -kWheelR},
-    {-kWheelW, -kWheelR}};
+    {-kWheelW, -kWheelR},
+}};
+// clang-format on
 
 static const cv::Scalar kRoadColor(102, 102, 102);
 static const cv::Scalar kBgColor(102, 204, 102);
@@ -77,7 +87,7 @@ static const cv::Scalar kWheelColor(0, 0, 0);
 static const cv::Scalar kWheelWhite(77, 77, 77);
 static const cv::Scalar kMudColor(0, 102, 102);
 
-enum UserDataType { INVALID = 1000, WHEEL_TYPE, TILE_TYPE };
+enum UserDataType : std::uint16_t { INVALID = 1000, WHEEL_TYPE, TILE_TYPE };
 
 class Particle {
  public:

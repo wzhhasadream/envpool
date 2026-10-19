@@ -20,10 +20,11 @@
 #include <utility>
 #include <vector>
 
+#include "envpool/core/array.h"
 #include "envpool/core/env_spec.h"
 
 /**
- * Templated subclass of EnvPool, to be overrided by the real EnvPool.
+ * Template subclass of EnvPool, to be overridden by the real EnvPool.
  */
 template <typename EnvSpec>
 class EnvPool {
@@ -47,6 +48,11 @@ class EnvPool {
   }
   virtual void Reset(const Array& env_ids) {
     throw std::runtime_error("reset not implemented");
+  }
+
+  virtual Array Render(const Array& env_ids, int width, int height,
+                       int camera_id) {
+    throw std::runtime_error("render not implemented");
   }
 };
 

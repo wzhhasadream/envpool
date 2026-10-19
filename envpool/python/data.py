@@ -13,11 +13,12 @@
 # limitations under the License.
 """Helper function for data convertion."""
 
+import keyword
+import re
 from collections import namedtuple
-from typing import Any, Dict, List, Tuple, Type
+from typing import Any, cast
 
 import dm_env
-import gym
 import gymnasium
 import numpy as np
 import optree
@@ -28,127 +29,177 @@ from .protocol import ArraySpec
 ACTION_THRESHOLD = 2**20
 
 
-def to_nested_dict(flatten_dict: Dict[str, Any],
-                   generator: Type = dict) -> Dict[str, Any]:
-  """Convert a flat dict to a hierarchical dict.
-
-  The input dict's hierarchy is denoted by ``.``.
-
-  Example:
-    ::
-
-      >>> to_nested_dict({"a.b": 2333, "a.c": 666})
-      {"a": {"b": 2333, "c": 666}}
-
-  Args:
-    flatten_dict: a dict whose keys list contains ``.`` for hierarchical
-      representation.
-    generator: a type of mapping. Default to ``dict``.
-  """
-  ret: Dict[str, Any] = generator()
-  for k, v in flatten_dict.items():
-    segments = k.split(".")
-    ptr = ret
-    for s in segments[:-1]:
-      if s not in ptr:
-        ptr[s] = generator()
-      ptr = ptr[s]
-    ptr[segments[-1]] = v
-  return ret
+def _maybe_scalar_int(value: Any) -> int | None:
+    arr = np.asarray(value)
+    if arr.size != 1:
+        return None
+    scalar = arr.item()
+    if not np.isfinite(scalar):
+        return None
+    integer = int(scalar)
+    if not np.isclose(scalar, float(integer)):
+        return None
+    return integer
 
 
-def to_namedtuple(name: str, hdict: Dict) -> Tuple:
-  """Convert a hierarchical dict to namedtuple."""
-  return namedtuple(name, hdict.keys())(
-    *[
-      to_namedtuple(k, v) if isinstance(v, Dict) else v
-      for k, v in hdict.items()
-    ]
-  )
+def _maybe_discrete_range(
+    spec: ArraySpec, spec_type: str
+) -> tuple[int, int] | None:
+    if np.prod(np.abs(spec.shape)) != 1:
+        return None
+    if not np.issubdtype(spec.dtype, np.integer) and not (
+        spec_type == "act" and spec.is_discrete
+    ):
+        return None
+    minimum = _maybe_scalar_int(spec.minimum)
+    maximum = _maybe_scalar_int(spec.maximum)
+    if minimum is None or maximum is None or maximum >= ACTION_THRESHOLD:
+        return None
+    return minimum, maximum - minimum + 1
+
+
+def to_nested_dict(
+    flatten_dict: dict[str, Any], generator: type = dict
+) -> dict[str, Any]:
+    """Convert a flat dict to a hierarchical dict.
+
+    The input dict's hierarchy is denoted by ``.``.
+
+    Example:
+      ::
+
+        >>> to_nested_dict({"a.b": 2333, "a.c": 666})
+        {"a": {"b": 2333, "c": 666}}
+
+    Args:
+      flatten_dict: a dict whose keys list contains ``.`` for hierarchical
+        representation.
+      generator: a type of mapping. Default to ``dict``.
+    """
+    ret: dict[str, Any] = generator()
+    for k, v in flatten_dict.items():
+        segments = k.split(".")
+        ptr = ret
+        for s in segments[:-1]:
+            keys = ptr.spaces if isinstance(ptr, gymnasium.spaces.Dict) else ptr
+            if s not in keys:
+                ptr[s] = generator()
+            ptr = ptr[s]
+        ptr[segments[-1]] = v
+    return ret
+
+
+def to_namedtuple(name: str, hdict: dict) -> tuple:
+    """Convert a hierarchical dict to namedtuple."""
+    typename = re.sub(r"\W", "_", name)
+    if not typename or typename[0].isdigit() or keyword.iskeyword(typename):
+        typename = f"_{typename}"
+    field_names = []
+    used_field_names: dict[str, int] = {}
+    for key in hdict.keys():
+        field = re.sub(r"\W", "_", key)
+        if not field or field[0].isdigit() or keyword.iskeyword(field):
+            field = f"_{field}"
+        if field in used_field_names:
+            used_field_names[field] += 1
+            field = f"{field}_{used_field_names[field]}"
+        else:
+            used_field_names[field] = 0
+        field_names.append(field)
+    return namedtuple(typename, field_names)(*[
+        to_namedtuple(k, v) if isinstance(v, dict) else v
+        for k, v in hdict.items()
+    ])
 
 
 def dm_spec_transform(
-  name: str, spec: ArraySpec, spec_type: str
+    name: str, spec: ArraySpec, spec_type: str
 ) -> dm_env.specs.Array:
-  """Transform ArraySpec to dm_env compatible specs."""
-  if np.prod(np.abs(spec.shape)) == 1 and \
-      np.isclose(spec.minimum, 0) and spec.maximum < ACTION_THRESHOLD:
-    # special treatment for discrete action space
-    return dm_env.specs.DiscreteArray(
-      name=name,
-      dtype=spec.dtype,
-      num_values=int(spec.maximum - spec.minimum + 1),
+    """Transform ArraySpec to dm_env compatible specs."""
+    discrete_range = _maybe_discrete_range(spec, spec_type)
+    if discrete_range is not None and discrete_range[0] == 0:
+        # dm_env only supports zero-based discrete arrays.
+        return dm_env.specs.DiscreteArray(
+            name=name,
+            dtype=spec.dtype
+            if np.issubdtype(spec.dtype, np.integer)
+            else np.int32,
+            num_values=discrete_range[1],
+        )
+    return dm_env.specs.BoundedArray(
+        name=name,
+        shape=[s for s in spec.shape if s != -1],
+        dtype=spec.dtype,
+        minimum=spec.minimum,
+        maximum=spec.maximum,
     )
-  return dm_env.specs.BoundedArray(
-    name=name,
-    shape=[s for s in spec.shape if s != -1],
-    dtype=spec.dtype,
-    minimum=spec.minimum,
-    maximum=spec.maximum,
-  )
 
 
-def gym_spec_transform(name: str, spec: ArraySpec, spec_type: str) -> gym.Space:
-  """Transform ArraySpec to gym.Env compatible spaces."""
-  if np.prod(np.abs(spec.shape)) == 1 and \
-      np.isclose(spec.minimum, 0) and spec.maximum < ACTION_THRESHOLD:
-    # special treatment for discrete action space
-    discrete_range = int(spec.maximum - spec.minimum + 1)
-    try:
-      return gym.spaces.Discrete(n=discrete_range, start=int(spec.minimum))
-    except TypeError:  # old gym version doesn't have `start`
-      return gym.spaces.Discrete(n=discrete_range)
-  return gym.spaces.Box(
-    shape=[s for s in spec.shape if s != -1],
-    dtype=spec.dtype,
-    low=spec.minimum,
-    high=spec.maximum,
-  )
+def gym_spec_transform(
+    name: str, spec: ArraySpec, spec_type: str
+) -> gymnasium.Space:
+    """Transform ArraySpec to gym.Env compatible spaces."""
+    discrete_range = _maybe_discrete_range(spec, spec_type)
+    if discrete_range is not None:
+        start, num_values = discrete_range
+        return gymnasium.spaces.Discrete(n=num_values, start=start)
+    if np.issubdtype(spec.dtype, np.bool_):
+        return gymnasium.spaces.MultiBinary([s for s in spec.shape if s != -1])
+    return gymnasium.spaces.Box(
+        shape=[s for s in spec.shape if s != -1],
+        dtype=spec.dtype,
+        low=spec.minimum,
+        high=spec.maximum,
+    )
 
 
 def gymnasium_spec_transform(
-  name: str, spec: ArraySpec, spec_type: str
+    name: str, spec: ArraySpec, spec_type: str
 ) -> gymnasium.Space:
-  """Transform ArraySpec to gymnasium.Env compatible spaces."""
-  if np.prod(np.abs(spec.shape)) == 1 and \
-      np.isclose(spec.minimum, 0) and spec.maximum < ACTION_THRESHOLD:
-    # special treatment for discrete action space
-    discrete_range = int(spec.maximum - spec.minimum + 1)
-    return gymnasium.spaces.Discrete(n=discrete_range, start=int(spec.minimum))
-  return gymnasium.spaces.Box(
-    shape=[s for s in spec.shape if s != -1],
-    dtype=spec.dtype,
-    low=spec.minimum,
-    high=spec.maximum,
-  )
+    """Transform ArraySpec to gymnasium.Env compatible spaces."""
+    return gym_spec_transform(name, spec, spec_type)
 
 
 def dm_structure(
-  root_name: str,
-  keys: List[str],
-) -> Tuple[List[Tuple[int, ...]], List[int], PyTreeSpec]:
-  """Convert flat keys into tree structure for namedtuple construction."""
-  new_keys = []
-  for key in keys:
-    if key in ["obs", "info"]:  # special treatment for single-node obs/info
-      key = f"obs:{key}"
-    key = key.replace("info:", "obs:")  # merge obs and info together
-    key = key.replace("obs:", f"{root_name}:")  # compatible with to_namedtuple
-    new_keys.append(key.replace(":", "."))
-  dict_tree = to_nested_dict(dict(zip(new_keys, list(range(len(new_keys))))))
-  structure = to_namedtuple(root_name, dict_tree)
-  paths, indices, treespec = optree.tree_flatten_with_path(structure)
-  return paths, indices, treespec
+    root_name: str,
+    keys: list[str],
+) -> tuple[list[tuple[int, ...]], list[int], PyTreeSpec]:
+    """Convert flat keys into tree structure for namedtuple construction."""
+    new_keys = []
+    for key in keys:
+        if key in ["obs", "info"]:  # special treatment for single-node obs/info
+            key = f"obs:{key}"
+        key = key.replace("info:", "obs:")  # merge obs and info together
+        key = key.replace(
+            "obs:", f"{root_name}:"
+        )  # compatible with to_namedtuple
+        new_keys.append(key.replace(":", "."))
+    dict_tree = to_nested_dict(
+        dict(zip(new_keys, list(range(len(new_keys))), strict=False))
+    )
+    structure = to_namedtuple(root_name, dict_tree)
+    paths: list[tuple[int, ...]]
+    indices: list[int]
+    paths, indices, treespec = optree.tree_flatten_with_path(
+        cast(Any, structure)
+    )
+    return paths, indices, treespec
 
 
 def gym_structure(
-  keys: List[str]
-) -> Tuple[List[Tuple[str, ...]], List[int], PyTreeSpec]:
-  """Convert flat keys into tree structure for dict construction."""
-  keys = [k.replace(":", ".") for k in keys]
-  dict_tree = to_nested_dict(dict(zip(keys, list(range(len(keys))))))
-  paths, indices, treespec = optree.tree_flatten_with_path(dict_tree)
-  return paths, indices, treespec
+    keys: list[str],
+) -> tuple[list[tuple[str, ...]], list[int], PyTreeSpec]:
+    """Convert flat keys into tree structure for dict construction."""
+    keys = [k.replace(":", ".") for k in keys]
+    dict_tree = to_nested_dict(
+        dict(zip(keys, list(range(len(keys))), strict=False))
+    )
+    paths: list[tuple[str, ...]]
+    indices: list[int]
+    paths, indices, treespec = optree.tree_flatten_with_path(
+        cast(Any, dict_tree)
+    )
+    return paths, indices, treespec
 
 
 gymnasium_structure = gym_structure

@@ -15,21 +15,28 @@
 """EnvPool workspace initialization, load after workspace0."""
 
 load("@com_github_nelhage_rules_boost//:boost/boost.bzl", "boost_deps")
-load("@com_justbuchanan_rules_qt//:qt_configure.bzl", "qt_configure")
-load("@pybind11_bazel//:python_configure.bzl", "python_configure")
 load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
+load("@rules_python//python:repositories.bzl", "python_register_multi_toolchains")
+load("//third_party/qt:qt_configure.bzl", "qt_configure")
 
 def workspace():
     """Configure pip requirements."""
-    python_configure(
-        name = "local_config_python",
-        python_version = "3",
+    python_register_multi_toolchains(
+        name = "python_versions",
+        python_versions = ["3.11", "3.12", "3.13", "3.14"],
+        default_version = "3.12",
+        ignore_root_user_error = True,
+        register_coverage_tool = True,
     )
 
-    rules_foreign_cc_dependencies()
+    rules_foreign_cc_dependencies(
+        register_default_tools = False,
+        register_built_tools = False,
+        register_built_pkgconfig_toolchain = False,
+    )
 
     boost_deps()
 
-    qt_configure()
+    qt_configure(name = "qt")
 
 workspace1 = workspace

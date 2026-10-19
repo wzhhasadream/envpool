@@ -27,6 +27,16 @@
 #include "envpool/core/env_spec.h"
 #include "envpool/core/state_buffer_queue.h"
 
+class RenderableEnv {
+ public:
+  virtual ~RenderableEnv() = default;
+
+  virtual std::pair<int, int> RenderSize(int width, int height) const = 0;
+
+  virtual void Render(int width, int height, int camera_id,
+                      unsigned char* rgb) = 0;
+};
+
 template <typename Dtype>
 struct InitializeHelper {
   static void Init(Array* arr) {}
@@ -62,9 +72,10 @@ template <typename EnvSpec>
 class Env {
  protected:
   int max_num_players_;
-  EnvSpec spec_;
+  const EnvSpec& spec_;
   int env_id_, seed_;
   std::mt19937 gen_;
+  bool force_reset_{false};
 
  private:
   StateBufferQueue* sbq_;
@@ -87,11 +98,22 @@ class Env {
       Dict<typename EnvSpec::ActionKeys,
            typename SpecToTArray<typename EnvSpec::ActionSpec::Values>::Type>;
 
+  static int ResolveSeed(const EnvSpec& spec, int env_id) {
+    const auto& env_seed = spec.config["env_seed"_];
+    if (!env_seed.empty()) {
+      CHECK_EQ(env_seed.size(),
+               static_cast<std::size_t>(spec.config["num_envs"_]))
+          << "`env_seed` must contain exactly one seed for each env";
+      return env_seed.at(env_id);
+    }
+    return spec.config["seed"_] + env_id;
+  }
+
   Env(const EnvSpec& spec, int env_id)
       : max_num_players_(spec.config["max_num_players"_]),
         spec_(spec),
         env_id_(env_id),
-        seed_(spec.config["seed"_] + env_id),
+        seed_(ResolveSeed(spec, env_id)),
         gen_(seed_),
         is_single_player_(max_num_players_ == 1),
         action_specs_(spec.action_spec.template AllValues<ShapeSpec>()),
@@ -159,8 +181,8 @@ class Env {
     }
   }
 
-  void EnvStep(StateBufferQueue* sbq, int order, bool reset) {
-    PreProcess(sbq, order, reset);
+  void EnvStep(StateBufferQueue* sbq, int order, bool reset, bool force_reset) {
+    PreProcess(sbq, order, reset, force_reset);
     if (reset) {
       Reset();
     } else {
@@ -178,9 +200,15 @@ class Env {
   virtual bool IsDone() { throw std::runtime_error("is_done not implemented"); }
 
  protected:
-  void PreProcess(StateBufferQueue* sbq, int order, bool reset) {
+  virtual int CurrentMaxEpisodeSteps() const {
+    return spec_.config["max_episode_steps"_];
+  }
+
+  void PreProcess(StateBufferQueue* sbq, int order, bool reset,
+                  bool force_reset) {
     sbq_ = sbq;
     order_ = order;
+    force_reset_ = force_reset;
     if (reset) {
       current_step_ = 0;
     } else {
@@ -197,13 +225,19 @@ class Env {
     slice_ = sbq_->Allocate(player_num, order_);
     State state(slice_.arr);
     bool done = IsDone();
-    int max_episode_steps = spec_.config["max_episode_steps"_];
+    int max_episode_steps = CurrentMaxEpisodeSteps();
     state["done"_] = done;
     state["discount"_] = static_cast<float>(!done);
     // dm_env.StepType.FIRST == 0
     // dm_env.StepType.MID == 1
     // dm_env.StepType.LAST == 2
-    state["step_type"_] = current_step_ == 0 ? 0 : done ? 2 : 1;
+    int step_type = 1;
+    if (current_step_ == 0) {
+      step_type = 0;
+    } else if (done) {
+      step_type = 2;
+    }
+    state["step_type"_] = step_type;
     state["trunc"_] = done && (current_step_ >= max_episode_steps);
     state["info:env_id"_] = env_id_;
     state["elapsed_step"_] = current_step_;

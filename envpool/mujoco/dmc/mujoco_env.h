@@ -20,13 +20,63 @@
 #include <mjxmacro.h>
 #include <mujoco.h>
 
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
+#include "envpool/core/env.h"
 #include "envpool/mujoco/dmc/utils.h"
+#include "envpool/mujoco/frame_stack.h"
+#include "envpool/mujoco/offscreen_renderer.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace mujoco_dmc {
+
+using envpool::mujoco::RenderCameraIdOrDefault;
+using envpool::mujoco::RenderHeightOrDefault;
+using envpool::mujoco::RenderWidthOrDefault;
+using envpool::mujoco::StackSpec;
+
+// DMC wrappers conventionally render camera 0; quadruped uses camera 2.
+// Keep this local to DMC and retain explicit camera overrides, including -1.
+template <typename BaseEnvFns, int kCameraId = 0>
+class PixelObservationEnvFns
+    : public envpool::mujoco::PixelObservationEnvFns<BaseEnvFns> {
+ public:
+  static decltype(auto) DefaultConfig() {
+    auto config =
+        envpool::mujoco::PixelObservationEnvFns<BaseEnvFns>::DefaultConfig();
+    config["render_camera_id"_] = kCameraId;
+    return config;
+  }
+};
+
+// Validate while constructing state and pixel specs, before workers start.
+inline int ValidateActionRepeat(int action_repeat) {
+  if (action_repeat < 1) {
+    throw std::invalid_argument("action_repeat must be positive");
+  }
+  return action_repeat;
+}
+
+inline double ValidateFrictionMultiplier(double friction_multiplier) {
+  if (!std::isfinite(friction_multiplier) || friction_multiplier < 0.0) {
+    throw std::invalid_argument(
+        "friction_multiplier must be finite and nonnegative");
+  }
+  return friction_multiplier;
+}
 
 /*
  * This class combines with dmc Task and Physics API.
@@ -37,24 +87,37 @@ namespace mujoco_dmc {
  * https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/composer/task.py
  * https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/composer/environment.py
  */
-class MujocoEnv {
+class MujocoEnv : public RenderableEnv {
  private:
   std::array<char, 1000> error_;
 
  protected:
   mjModel* model_;
   mjData* data_;
-  int n_sub_steps_, max_episode_steps_, elapsed_step_;
+  int n_sub_steps_, action_repeat_, max_episode_steps_, elapsed_step_;
   float reward_, discount_;
+  float last_reward_{0.0f};
   bool done_{true};
 #ifdef ENVPOOL_TEST
   std::unique_ptr<mjtNum> qpos0_;
 #endif
+  std::unique_ptr<envpool::mujoco::OffscreenRenderer> renderer_;
+  envpool::mujoco::FrameStackBuffer frame_stack_buffer_;
+  envpool::mujoco::PixelFrameStackBuffer pixel_frame_stack_buffer_;
+  int render_width_, render_height_, render_camera_id_;
+  std::vector<uint8_t> cached_render_;
+  bool has_cached_render_{false};
+  int cached_render_width_{0};
+  int cached_render_height_{0};
+  int cached_render_camera_id_{0};
 
  public:
   MujocoEnv(const std::string& base_path, const std::string& raw_xml,
-            int n_sub_steps, int max_episode_steps);
-  ~MujocoEnv();
+            int n_sub_steps, int max_episode_steps, int frame_stack,
+            int render_width = 84, int render_height = 84,
+            int render_camera_id = -1, int action_repeat = 1,
+            double friction_multiplier = 1.0);
+  ~MujocoEnv() override;
 
   // rl control Environment
   // https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/rl/control.py#L77
@@ -94,6 +157,84 @@ class MujocoEnv {
   // randomizer
   // https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/suite/utils/randomizers.py#L35
   void RandomizeLimitedAndRotationalJoints(std::mt19937* gen);
+
+  void RenderFresh(int width, int height, int camera_id, unsigned char* rgb) {
+#ifdef _WIN32
+    // Native pixel observations are rendered on worker threads, while env
+    // teardown happens on the Python thread. Recreating the renderer on
+    // Windows avoids cross-thread WGL resource lifetime issues.
+    envpool::mujoco::OffscreenRenderer renderer(
+        envpool::mujoco::CameraPolicy::kDmControl);
+    renderer.Render(model_, data_, width, height, camera_id, rgb);
+#else
+    if (renderer_ == nullptr) {
+      renderer_ = std::make_unique<envpool::mujoco::OffscreenRenderer>(
+          envpool::mujoco::CameraPolicy::kDmControl);
+    }
+    renderer_->Render(model_, data_, width, height, camera_id, rgb);
+#endif
+  }
+
+  bool CopyCachedRender(int width, int height, int camera_id,
+                        unsigned char* rgb) const {
+    if (!has_cached_render_ || cached_render_width_ != width ||
+        cached_render_height_ != height ||
+        cached_render_camera_id_ != camera_id) {
+      return false;
+    }
+    std::memcpy(rgb, cached_render_.data(), cached_render_.size());
+    return true;
+  }
+
+  void UpdateCachedRender(int width, int height, int camera_id,
+                          const unsigned char* rgb) {
+    std::size_t render_size = static_cast<std::size_t>(width) * height * 3;
+    cached_render_.assign(rgb, rgb + render_size);
+    has_cached_render_ = true;
+    cached_render_width_ = width;
+    cached_render_height_ = height;
+    cached_render_camera_id_ = camera_id;
+  }
+
+  void Render(int width, int height, int camera_id,
+              unsigned char* rgb) override {
+    if (CopyCachedRender(width, height, camera_id, rgb)) {
+      return;
+    }
+    RenderFresh(width, height, camera_id, rgb);
+  }
+
+  std::pair<int, int> RenderSize(int width, int height) const override {
+    return {width > 0 ? width : 480, height > 0 ? height : 480};
+  }
+
+  mjtNum* PrepareObservation(std::string_view key, Array* target) {
+    return frame_stack_buffer_.Prepare(key, target);
+  }
+
+  void CommitObservation(std::string_view key, Array* target, bool reset) {
+    frame_stack_buffer_.Commit(key, target, reset);
+  }
+
+  void AssignObservation(std::string_view key, Array* target,
+                         const mjtNum* data, std::size_t size, bool reset) {
+    frame_stack_buffer_.Assign(key, target, data, size, reset);
+  }
+
+  void AssignObservation(std::string_view key, Array* target, mjtNum value,
+                         bool reset) {
+    frame_stack_buffer_.AssignScalar(key, target, value, reset);
+  }
+
+  void AssignPixelObservation(std::string_view key, Array* target, bool reset) {
+    uint8_t* scratch =
+        pixel_frame_stack_buffer_.Prepare(key, render_width_, render_height_);
+    RenderFresh(render_width_, render_height_, render_camera_id_, scratch);
+    UpdateCachedRender(render_width_, render_height_, render_camera_id_,
+                       scratch);
+    pixel_frame_stack_buffer_.Commit(key, target, render_width_, render_height_,
+                                     reset);
+  }
 };
 
 }  // namespace mujoco_dmc

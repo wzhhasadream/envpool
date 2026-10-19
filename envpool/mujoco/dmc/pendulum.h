@@ -40,16 +40,22 @@ std::string GetPendulumXML(const std::string& base_path,
 class PendulumEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(1),
+    return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("swingup")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
-    return MakeDict("obs:orientation"_.Bind(Spec<mjtNum>({2})),
-                    "obs:velocity"_.Bind(Spec<mjtNum>({1}))
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs:orientation"_.Bind(
+            StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_])),
+        "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({1}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
-                        ,
-                    "info:qpos0"_.Bind(Spec<mjtNum>({1}))
+            ,
+        "info:qpos0"_.Bind(Spec<mjtNum>({1}))
 #endif
     );  // NOLINT
   }
@@ -60,20 +66,35 @@ class PendulumEnvFns {
 };
 
 using PendulumEnvSpec = EnvSpec<PendulumEnvFns>;
+using PendulumPixelEnvFns = PixelObservationEnvFns<PendulumEnvFns>;
+using PendulumPixelEnvSpec = EnvSpec<PendulumPixelEnvFns>;
 
-class PendulumEnv : public Env<PendulumEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class PendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   const mjtNum kCosineBound = std::cos(8.0 / 180 * M_PI);
   int id_hinge_, id_pole_;
 
  public:
-  PendulumEnv(const Spec& spec, int env_id)
-      : Env<PendulumEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  PendulumEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(spec.config["base_path"_],
                   GetPendulumXML(spec.config["base_path"_],
                                  spec.config["task_name"_]),
-                  spec.config["frame_skip"_],
-                  spec.config["max_episode_steps"_]),
+                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+                  spec.config["frame_stack"_],
+                  RenderWidthOrDefault<kFromPixels>(spec.config),
+                  RenderHeightOrDefault<kFromPixels>(spec.config),
+                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
+                  spec.config["action_repeat"_],
+                  spec.config["friction_multiplier"_]),
         id_hinge_(GetQvelId(model_, "hinge")),
         id_pole_(mj_name2id(model_, mjOBJ_XBODY, "pole")) {
     const std::string& task_name = spec.config["task_name"_];
@@ -94,13 +115,13 @@ class PendulumEnv : public Env<PendulumEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -109,15 +130,25 @@ class PendulumEnv : public Env<PendulumEnvSpec>, public MujocoEnv {
   bool TaskShouldTerminateEpisode() override { return false; }
 
  private:
-  void WriteState() {
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    const auto& pole_orient = PoleOrientation();
-    state["obs:orientation"_].Assign(pole_orient.begin(), pole_orient.size());
-    state["obs:velocity"_] = AngularVelocity();
-    // info for check alignment
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& pole_orient = PoleOrientation();
+      auto obs_orientation = state["obs:orientation"_];
+      AssignObservation("obs:orientation", &obs_orientation, pole_orient.data(),
+                        pole_orient.size(), reset);
+      auto obs_velocity = state["obs:velocity"_];
+      AssignObservation("obs:velocity", &obs_velocity, AngularVelocity(),
+                        reset);
+    }
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
 #endif
@@ -137,7 +168,10 @@ class PendulumEnv : public Env<PendulumEnvSpec>, public MujocoEnv {
   }
 };
 
+using PendulumEnv = PendulumEnvBase<PendulumEnvSpec, false>;
+using PendulumPixelEnv = PendulumEnvBase<PendulumPixelEnvSpec, true>;
 using PendulumEnvPool = AsyncEnvPool<PendulumEnv>;
+using PendulumPixelEnvPool = AsyncEnvPool<PendulumPixelEnv>;
 
 }  // namespace mujoco_dmc
 

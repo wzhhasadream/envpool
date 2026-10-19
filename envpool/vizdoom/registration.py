@@ -14,37 +14,40 @@
 """Vizdoom env registration."""
 
 import os
-from typing import List
 
-from envpool.registration import base_path, register
+from envpool.registration import asset_base_path, package_base_path, register
 
-maps_path = os.path.join(base_path, "vizdoom", "maps")
+_VIZDOOM_BASE_PATH = asset_base_path("envpool_assets", "vizdoom/maps")
+maps_path = os.path.join(_VIZDOOM_BASE_PATH, "vizdoom", "maps")
 
 
-def _vizdoom_game_list() -> List[str]:
-  return [
-    game.replace(".cfg", "")
-    for game in sorted(os.listdir(maps_path))
-    if game.endswith(".cfg") and
-    os.path.exists(os.path.join(maps_path, game.replace(".cfg", ".wad")))
-  ]
+def _vizdoom_game_list() -> list[str]:
+    return [
+        game.replace(".cfg", "")
+        for game in sorted(os.listdir(maps_path))
+        if game.endswith(".cfg")
+        and os.path.exists(
+            os.path.join(maps_path, game.replace(".cfg", ".wad"))
+        )
+    ]
 
 
 for game in _vizdoom_game_list() + ["vizdoom_custom"]:
-  name = "".join([g.capitalize() for g in game.split("_")])
-  if game == "vizdoom_custom":
-    cfg_path = wad_path = ""
-  else:
-    cfg_path = os.path.join(maps_path, f"{game}.cfg")
-    wad_path = os.path.join(maps_path, f"{game}.wad")
-  register(
-    task_id=f"{name}-v1",
-    import_path="envpool.vizdoom",
-    spec_cls="VizdoomEnvSpec",
-    dm_cls="VizdoomDMEnvPool",
-    gym_cls="VizdoomGymEnvPool",
-    gymnasium_cls="VizdoomGymnasiumEnvPool",
-    cfg_path=cfg_path,
-    wad_path=wad_path,
-    max_episode_steps=525,
-  )
+    name = "".join([g.capitalize() for g in game.split("_")])
+    if game == "vizdoom_custom":
+        cfg_path = wad_path = ""
+    else:
+        cfg_path = os.path.join(maps_path, f"{game}.cfg")
+        wad_path = os.path.join(maps_path, f"{game}.wad")
+    register(
+        task_id=f"{name}-v1",
+        import_path="envpool.vizdoom",
+        spec_cls="VizdoomEnvSpec",
+        dm_cls="VizdoomDMEnvPool",
+        gymnasium_cls="VizdoomGymnasiumEnvPool",
+        cfg_path=cfg_path,
+        vzd_path=os.path.join(package_base_path, "vizdoom", "bin", "vizdoom"),
+        wad_path=wad_path,
+        max_episode_steps=525,
+        base_path=_VIZDOOM_BASE_PATH,
+    )

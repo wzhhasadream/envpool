@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -46,13 +48,15 @@ pybind_extension(
 py_library(
     name = "toy_text",
     srcs = ["__init__.py"],
-    data = [":toy_text_envpool.so"],
+    data = [":toy_text_envpool"],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
 py_library(
     name = "toy_text_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = [
         "//envpool:registration",
     ],
@@ -61,12 +65,13 @@ py_library(
 py_test(
     name = "toy_text_test",
     srcs = ["toy_text_test.py"],
+    imports = ["../.."],
     deps = [
         ":toy_text",
         ":toy_text_registration",
         requirement("absl-py"),
         requirement("dm_env"),
-        requirement("gym"),
+        requirement("gymnasium"),
         requirement("numpy"),
         requirement("scipy"),
         requirement("pygame"),

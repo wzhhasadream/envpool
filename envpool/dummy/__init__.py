@@ -16,15 +16,17 @@
 
 from envpool.python.api import py_env
 
-from .dummy_envpool import _DummyEnvPool, _DummyEnvSpec
+from .dummy_envpool import (
+    _DummyEnvPool,
+    _DummyEnvSpec,
+)
 
-DummyEnvSpec, DummyDMEnvPool, DummyGymEnvPool, DummyGymnasiumEnvPool = py_env(
-  _DummyEnvSpec, _DummyEnvPool
+DummyEnvSpec, DummyDMEnvPool, DummyGymnasiumEnvPool = py_env(
+    _DummyEnvSpec, _DummyEnvPool
 )
 
 __all__ = [
-  "DummyEnvSpec",
-  "DummyDMEnvPool",
-  "DummyGymEnvPool",
-  "DummyGymnasiumEnvPool",
+    "DummyEnvSpec",
+    "DummyDMEnvPool",
+    "DummyGymnasiumEnvPool",
 ]

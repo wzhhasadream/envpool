@@ -32,28 +32,35 @@ class SwimmerEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("reward_threshold"_.Bind(360.0), "frame_skip"_.Bind(4),
+                    "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
                     "post_constraint"_.Bind(true),
                     "exclude_current_positions_from_observation"_.Bind(true),
+                    "xml_file"_.Bind(std::string("swimmer.xml")),
+                    "gymnasium_v5_render_camera"_.Bind(false),
                     "forward_reward_weight"_.Bind(1.0),
                     "ctrl_cost_weight"_.Bind(1e-4),
                     "reset_noise_scale"_.Bind(0.1));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     bool no_pos = conf["exclude_current_positions_from_observation"_];
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({no_pos ? 8 : 10}, {-inf, inf})),
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs"_.Bind(StackSpec(Spec<mjtNum>({no_pos ? 8 : 10}, {-inf, inf}),
+                              conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
-                    "info:qpos0"_.Bind(Spec<mjtNum>({5})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({5})),
+        "info:qpos0"_.Bind(Spec<mjtNum>({5})),
+        "info:qvel0"_.Bind(Spec<mjtNum>({5})),
 #endif
-                    "info:reward_fwd"_.Bind(Spec<mjtNum>({-1})),
-                    "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})),
-                    "info:x_position"_.Bind(Spec<mjtNum>({-1})),
-                    "info:y_position"_.Bind(Spec<mjtNum>({-1})),
-                    "info:distance_from_origin"_.Bind(Spec<mjtNum>({-1})),
-                    "info:x_velocity"_.Bind(Spec<mjtNum>({-1})),
-                    "info:y_velocity"_.Bind(Spec<mjtNum>({-1})));
+        "info:reward_fwd"_.Bind(Spec<mjtNum>({-1})),
+        "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})),
+        "info:x_position"_.Bind(Spec<mjtNum>({-1})),
+        "info:y_position"_.Bind(Spec<mjtNum>({-1})),
+        "info:distance_from_origin"_.Bind(Spec<mjtNum>({-1})),
+        "info:x_velocity"_.Bind(Spec<mjtNum>({-1})),
+        "info:y_velocity"_.Bind(Spec<mjtNum>({-1})));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -62,19 +69,36 @@ class SwimmerEnvFns {
 };
 
 using SwimmerEnvSpec = EnvSpec<SwimmerEnvFns>;
+using SwimmerPixelEnvFns = PixelObservationEnvFns<SwimmerEnvFns>;
+using SwimmerPixelEnvSpec = EnvSpec<SwimmerPixelEnvFns>;
 
-class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class SwimmerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
   bool no_pos_;
   mjtNum ctrl_cost_weight_, forward_reward_weight_;
   std::uniform_real_distribution<> dist_;
 
  public:
-  SwimmerEnv(const Spec& spec, int env_id)
-      : Env<SwimmerEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] + "/mujoco/assets_gym/swimmer.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  SwimmerEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
         forward_reward_weight_(spec.config["forward_reward_weight"_]),
@@ -100,48 +124,66 @@ class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    WriteState(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum x_before = data_->qpos[0];
-    mjtNum y_before = data_->qpos[1];
-    MujocoStep(act);
-    mjtNum x_after = data_->qpos[0];
-    mjtNum y_after = data_->qpos[1];
+    double reward_sum = 0.0;
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum x_before = data_->qpos[0];
+      mjtNum y_before = data_->qpos[1];
+      MujocoStep(act);
+      mjtNum x_after = data_->qpos[0];
+      mjtNum y_after = data_->qpos[1];
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+      // xv and yv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (x_after - x_before) / dt;
+      mjtNum yv = (y_after - y_before) / dt;
+
+      // reward and done
+      auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, yv, ctrl_cost, x_after,
+                   y_after, false);
+        break;
+      }
     }
-    // xv and yv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (x_after - x_before) / dt;
-    mjtNum yv = (y_after - y_before) / dt;
-
-    // reward and done
-    auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, yv, ctrl_cost, x_after, y_after);
   }
 
  private:
   void WriteState(float reward, mjtNum xv, mjtNum yv, mjtNum ctrl_cost,
-                  mjtNum x_after, mjtNum y_after) {
-    State state = Allocate();
+                  mjtNum x_after, mjtNum y_after, bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    for (int i = no_pos_ ? 2 : 0; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      for (int i = no_pos_ ? 2 : 0; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
+      }
+      for (int i = 0; i < model_->nv; ++i) {
+        *(obs++) = data_->qvel[i];
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < model_->nv; ++i) {
-      *(obs++) = data_->qvel[i];
-    }
-    // info
     state["info:reward_fwd"_] = xv * forward_reward_weight_;
     state["info:reward_ctrl"_] = -ctrl_cost;
     state["info:x_position"_] = x_after;
@@ -157,7 +199,10 @@ class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
   }
 };
 
+using SwimmerEnv = SwimmerEnvBase<SwimmerEnvSpec, false>;
+using SwimmerPixelEnv = SwimmerEnvBase<SwimmerPixelEnvSpec, true>;
 using SwimmerEnvPool = AsyncEnvPool<SwimmerEnv>;
+using SwimmerPixelEnvPool = AsyncEnvPool<SwimmerPixelEnv>;
 
 }  // namespace mujoco_gym
 

@@ -33,20 +33,31 @@ class ReacherEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict(
         "reward_threshold"_.Bind(-3.75), "frame_skip"_.Bind(2),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
         "post_constraint"_.Bind(true), "ctrl_cost_weight"_.Bind(1.0),
-        "dist_cost_weight"_.Bind(1.0), "reset_qpos_scale"_.Bind(0.1),
-        "reset_qvel_scale"_.Bind(0.005), "reset_goal_scale"_.Bind(0.2));
+        "reward_after_step"_.Bind(false), "obs_include_z_distance"_.Bind(true),
+        "dist_cost_weight"_.Bind(1.0),
+        "xml_file"_.Bind(std::string("reacher.xml")),
+        "gymnasium_v5_render_camera"_.Bind(false),
+        "reset_qpos_scale"_.Bind(0.1), "reset_qvel_scale"_.Bind(0.005),
+        "reset_goal_scale"_.Bind(0.2));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({11}, {-inf, inf})),
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs"_.Bind(
+            StackSpec(Spec<mjtNum>({conf["obs_include_z_distance"_] ? 11 : 10},
+                                   {-inf, inf}),
+                      conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
-                    "info:qpos0"_.Bind(Spec<mjtNum>({4})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({4})),
+        "info:qpos0"_.Bind(Spec<mjtNum>({4})),
+        "info:qvel0"_.Bind(Spec<mjtNum>({4})),
 #endif
-                    "info:reward_dist"_.Bind(Spec<mjtNum>({-1})),
-                    "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})));
+        "info:reward_dist"_.Bind(Spec<mjtNum>({-1})),
+        "info:reward_ctrl"_.Bind(Spec<mjtNum>({-1})));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -55,21 +66,43 @@ class ReacherEnvFns {
 };
 
 using ReacherEnvSpec = EnvSpec<ReacherEnvFns>;
+using ReacherPixelEnvFns = PixelObservationEnvFns<ReacherEnvFns>;
+using ReacherPixelEnvSpec = EnvSpec<ReacherPixelEnvFns>;
 
-class ReacherEnv : public Env<ReacherEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class ReacherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
   int id_fingertip_, id_target_;
+  bool reward_after_step_, obs_include_z_distance_;
+  bool gymnasium_v5_render_camera_;
   mjtNum ctrl_cost_weight_, dist_cost_weight_, reset_goal_scale_;
   std::uniform_real_distribution<> dist_qpos_, dist_qvel_, dist_goal_;
 
  public:
-  ReacherEnv(const Spec& spec, int env_id)
-      : Env<ReacherEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] + "/mujoco/assets_gym/reacher.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  ReacherEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         id_fingertip_(mj_name2id(model_, mjOBJ_XBODY, "fingertip")),
         id_target_(mj_name2id(model_, mjOBJ_XBODY, "target")),
+        reward_after_step_(spec.config["reward_after_step"_]),
+        obs_include_z_distance_(spec.config["obs_include_z_distance"_]),
+        gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
         dist_cost_weight_(spec.config["dist_cost_weight"_]),
         reset_goal_scale_(spec.config["reset_goal_scale"_]),
@@ -103,35 +136,58 @@ class ReacherEnv : public Env<ReacherEnvSpec>, public MujocoEnv {
 #endif
   }
 
+  bool RenderCamera(mjvCamera* camera) override {
+    if (!gymnasium_v5_render_camera_) {
+      return false;
+    }
+    camera->trackbodyid = 0;
+    ApplyGymnasiumDefaultCameraId(camera);
+    return true;
+  }
+
   bool IsDone() override { return done_; }
 
   void Reset() override {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0, 0.0, 0.0);
+    WriteState(0.0, 0.0, 0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
-    const auto& dist = GetDist();
-    MujocoStep(act);
+    double reward_sum = 0.0;
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      std::array<mjtNum, 3> dist = {0.0, 0.0, 0.0};
+      if (!reward_after_step_) {
+        dist = GetDist();
+      }
+      MujocoStep(act);
+      if (reward_after_step_) {
+        dist = GetDist();
+      }
 
-    // dist_cost
-    mjtNum dist_cost =
-        dist_cost_weight_ *
-        std::sqrt(dist[0] * dist[0] + dist[1] * dist[1] + dist[2] * dist[2]);
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      // dist_cost
+      mjtNum dist_cost =
+          dist_cost_weight_ *
+          std::sqrt(dist[0] * dist[0] + dist[1] * dist[1] + dist[2] * dist[2]);
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+
+      // reward and done
+      auto reward = static_cast<float>(-dist_cost - ctrl_cost);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), ctrl_cost, dist_cost, false);
+        break;
+      }
     }
-
-    // reward and done
-    auto reward = static_cast<float>(-dist_cost - ctrl_cost);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, ctrl_cost, dist_cost);
   }
 
  private:
@@ -143,26 +199,38 @@ class ReacherEnv : public Env<ReacherEnvSpec>, public MujocoEnv {
         data_->xpos[id_fingertip_ * 3 + 2] - data_->xpos[id_target_ * 3 + 2]};
   }
 
-  void WriteState(float reward, mjtNum ctrl_cost, mjtNum dist_cost) {
-    State state = Allocate();
+  void WriteState(float reward, mjtNum ctrl_cost, mjtNum dist_cost,
+                  bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    *(obs++) = std::cos(data_->qpos[0]);
-    *(obs++) = std::cos(data_->qpos[1]);
-    *(obs++) = std::sin(data_->qpos[0]);
-    *(obs++) = std::sin(data_->qpos[1]);
-    for (int i = 2; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      *(obs++) = std::cos(data_->qpos[0]);
+      *(obs++) = std::cos(data_->qpos[1]);
+      *(obs++) = std::sin(data_->qpos[0]);
+      *(obs++) = std::sin(data_->qpos[1]);
+      for (int i = 2; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
+      }
+      for (int i = 0; i < 2; ++i) {
+        *(obs++) = data_->qvel[i];
+      }
+      const auto& dist = GetDist();
+      *(obs++) = dist[0];
+      *(obs++) = dist[1];
+      if (obs_include_z_distance_) {
+        *(obs++) = dist[2];
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < 2; ++i) {
-      *(obs++) = data_->qvel[i];
-    }
-    const auto& dist = GetDist();
-    *(obs++) = dist[0];
-    *(obs++) = dist[1];
-    *(obs++) = dist[2];
-    // info
     state["info:reward_dist"_] = -dist_cost;
     state["info:reward_ctrl"_] = -ctrl_cost;
 #ifdef ENVPOOL_TEST
@@ -172,7 +240,10 @@ class ReacherEnv : public Env<ReacherEnvSpec>, public MujocoEnv {
   }
 };
 
+using ReacherEnv = ReacherEnvBase<ReacherEnvSpec, false>;
+using ReacherPixelEnv = ReacherEnvBase<ReacherPixelEnvSpec, true>;
 using ReacherEnvPool = AsyncEnvPool<ReacherEnv>;
+using ReacherPixelEnvPool = AsyncEnvPool<ReacherPixelEnv>;
 
 }  // namespace mujoco_gym
 

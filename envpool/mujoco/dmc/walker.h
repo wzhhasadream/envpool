@@ -39,17 +39,23 @@ std::string GetWalkerXML(const std::string& base_path,
 class WalkerEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(10),
+    return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("stand")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
-    return MakeDict("obs:orientations"_.Bind(Spec<mjtNum>({14})),
-                    "obs:height"_.Bind(Spec<mjtNum>({})),
-                    "obs:velocity"_.Bind(Spec<mjtNum>({9}))
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs:orientations"_.Bind(
+            StackSpec(Spec<mjtNum>({14}), conf["frame_stack"_])),
+        "obs:height"_.Bind(StackSpec(Spec<mjtNum>({}), conf["frame_stack"_])),
+        "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({9}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
-                        ,
-                    "info:qpos0"_.Bind(Spec<mjtNum>({9}))
+            ,
+        "info:qpos0"_.Bind(Spec<mjtNum>({9}))
 #endif
     );  // NOLINT
   }
@@ -60,9 +66,16 @@ class WalkerEnvFns {
 };
 
 using WalkerEnvSpec = EnvSpec<WalkerEnvFns>;
+using WalkerPixelEnvFns = PixelObservationEnvFns<WalkerEnvFns>;
+using WalkerPixelEnvSpec = EnvSpec<WalkerPixelEnvFns>;
 
-class WalkerEnv : public Env<WalkerEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class WalkerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   // Minimal height of torso over foot above which stand reward is 1.
   const mjtNum kStandHeight = 1.2;
   // Horizontal speeds(meters / second) above which move reward is 1.
@@ -72,12 +85,20 @@ class WalkerEnv : public Env<WalkerEnvSpec>, public MujocoEnv {
   mjtNum move_speed_;
 
  public:
-  WalkerEnv(const Spec& spec, int env_id)
-      : Env<WalkerEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  WalkerEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
             GetWalkerXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_]),
+            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         id_torso_subtreelinvel_(GetSensorId(model_, "torso_subtreelinvel")) {
     const std::string& task_name = spec.config["task_name"_];
@@ -104,13 +125,13 @@ class WalkerEnv : public Env<WalkerEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -131,16 +152,27 @@ class WalkerEnv : public Env<WalkerEnvSpec>, public MujocoEnv {
   bool TaskShouldTerminateEpisode() override { return false; }
 
  private:
-  void WriteState() {
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    const auto& orient = Orientations();
-    state["obs:orientations"_].Assign(orient.begin(), orient.size());
-    state["obs:height"_] = TorsoHeight();
-    state["obs:velocity"_].Assign(data_->qvel, model_->nv);
-    // info for check alignment
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& orient = Orientations();
+      auto obs_orientations = state["obs:orientations"_];
+      AssignObservation("obs:orientations", &obs_orientations, orient.data(),
+                        orient.size(), reset);
+      auto obs_height = state["obs:height"_];
+      AssignObservation("obs:height", &obs_height, TorsoHeight(), reset);
+      auto obs_velocity = state["obs:velocity"_];
+      AssignObservation("obs:velocity", &obs_velocity, data_->qvel, model_->nv,
+                        reset);
+    }
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
 #endif
@@ -169,7 +201,10 @@ class WalkerEnv : public Env<WalkerEnvSpec>, public MujocoEnv {
   }
 };
 
+using WalkerEnv = WalkerEnvBase<WalkerEnvSpec, false>;
+using WalkerPixelEnv = WalkerEnvBase<WalkerPixelEnvSpec, true>;
 using WalkerEnvPool = AsyncEnvPool<WalkerEnv>;
+using WalkerPixelEnvPool = AsyncEnvPool<WalkerPixelEnv>;
 
 }  // namespace mujoco_dmc
 

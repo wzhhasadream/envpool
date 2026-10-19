@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "protocol",
     srcs = ["protocol.py"],
+    imports = ["../.."],
     deps = [
         requirement("dm-env"),
-        requirement("gym"),
+        requirement("gymnasium"),
         requirement("numpy"),
     ],
 )
@@ -29,6 +31,7 @@ py_library(
 py_library(
     name = "utils",
     srcs = ["utils.py"],
+    imports = ["../.."],
     deps = [
         requirement("numpy"),
     ],
@@ -37,10 +40,10 @@ py_library(
 py_library(
     name = "data",
     srcs = ["data.py"],
+    imports = ["../.."],
     deps = [
         requirement("optree"),
         requirement("dm-env"),
-        requirement("gym"),
         requirement("gymnasium"),
         requirement("numpy"),
         ":protocol",
@@ -50,9 +53,9 @@ py_library(
 py_library(
     name = "env_spec",
     srcs = ["env_spec.py"],
+    imports = ["../.."],
     deps = [
         requirement("dm-env"),
-        requirement("gym"),
         requirement("gymnasium"),
         ":data",
         ":protocol",
@@ -61,9 +64,20 @@ py_library(
 )
 
 py_library(
+    name = "glfw_context",
+    srcs = ["glfw_context.py"],
+    imports = ["../.."],
+    deps = [
+        requirement("glfw"),
+    ],
+)
+
+py_library(
     name = "envpool",
     srcs = ["envpool.py"],
+    imports = ["../.."],
     deps = [
+        ":glfw_context",
         requirement("optree"),
         requirement("dm-env"),
         requirement("numpy"),
@@ -75,6 +89,7 @@ py_library(
 py_library(
     name = "xla_template",
     srcs = ["xla_template.py"],
+    imports = ["../.."],
     deps = [
         requirement("jax"),
     ],
@@ -83,6 +98,7 @@ py_library(
 py_library(
     name = "lax",
     srcs = ["lax.py"],
+    imports = ["../.."],
     deps = [
         requirement("jax"),
         requirement("dm-env"),
@@ -96,28 +112,17 @@ py_library(
 py_library(
     name = "dm_envpool",
     srcs = ["dm_envpool.py"],
-    deps = [
-        requirement("optree"),
-        requirement("dm-env"),
-        requirement("numpy"),
-        ":data",
-        ":envpool",
-        ":lax",
-        ":utils",
+    data = [
+        "lax.py",
+        "xla_template.py",
     ],
-)
-
-py_library(
-    name = "gym_envpool",
-    srcs = ["gym_envpool.py"],
+    imports = ["../.."],
     deps = [
         requirement("optree"),
         requirement("dm-env"),
-        requirement("gym"),
         requirement("numpy"),
         ":data",
         ":envpool",
-        ":lax",
         ":utils",
     ],
 )
@@ -125,6 +130,11 @@ py_library(
 py_library(
     name = "gymnasium_envpool",
     srcs = ["gymnasium_envpool.py"],
+    data = [
+        "lax.py",
+        "xla_template.py",
+    ],
+    imports = ["../.."],
     deps = [
         requirement("optree"),
         requirement("dm-env"),
@@ -132,7 +142,6 @@ py_library(
         requirement("numpy"),
         ":data",
         ":envpool",
-        ":lax",
         ":utils",
     ],
 )
@@ -140,10 +149,10 @@ py_library(
 py_library(
     name = "api",
     srcs = ["api.py"],
+    imports = ["../.."],
     deps = [
         ":dm_envpool",
         ":env_spec",
-        ":gym_envpool",
         ":gymnasium_envpool",
         ":protocol",
     ],
@@ -152,7 +161,43 @@ py_library(
 py_library(
     name = "python",
     srcs = ["__init__.py"],
+    imports = ["../.."],
     deps = [
         ":api",
+    ],
+)
+
+py_test(
+    name = "gymnasium_space_test",
+    srcs = ["gymnasium_space_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":gymnasium_envpool",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "gymnasium_space_native_test",
+    size = "large",
+    srcs = ["gymnasium_space_native_test.py"],
+    imports = ["../.."],
+    deps = [
+        "//envpool/atari:atari",
+        "//envpool/atari:atari_registration",
+        "//envpool/mujoco:metaworld",
+        "//envpool/mujoco:metaworld_registration",
+        "//envpool/mujoco:mujoco_dmc",
+        "//envpool/mujoco:mujoco_dmc_registration",
+        "//envpool/mujoco:mujoco_gym",
+        "//envpool/mujoco:mujoco_gym_registration",
+        "//envpool/mujoco:myosuite",
+        "//envpool/mujoco:myosuite_registration",
+        ":glfw_context",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
     ],
 )

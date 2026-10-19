@@ -17,8 +17,6 @@
 #ifndef ENVPOOL_CORE_SPEC_H_
 #define ENVPOOL_CORE_SPEC_H_
 
-#include <glog/logging.h>
-
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -29,7 +27,14 @@
 #include <utility>
 #include <vector>
 
-static std::size_t Prod(const std::size_t* shape, std::size_t ndim) {
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+inline std::size_t Prod(const std::size_t* shape, std::size_t ndim) {
   return std::accumulate(shape, shape + ndim, static_cast<std::size_t>(1),
                          std::multiplies<>());
 }
@@ -59,7 +64,8 @@ template <typename D>
 class Spec : public ShapeSpec {
  public:
   using dtype = D;  // NOLINT
-  std::tuple<dtype, dtype> bounds = {std::numeric_limits<dtype>::min(),
+  bool is_discrete{false};
+  std::tuple<dtype, dtype> bounds = {std::numeric_limits<dtype>::lowest(),
                                      std::numeric_limits<dtype>::max()};
   std::tuple<std::vector<dtype>, std::vector<dtype>> elementwise_bounds;
   explicit Spec(std::vector<int>&& shape)
@@ -72,6 +78,24 @@ class Spec : public ShapeSpec {
       : ShapeSpec(sizeof(dtype), std::move(shape)), bounds(std::move(bounds)) {}
   Spec(const std::vector<int>& shape, const std::tuple<dtype, dtype>& bounds)
       : ShapeSpec(sizeof(dtype), shape), bounds(bounds) {}
+  Spec(std::vector<int>&& shape, std::initializer_list<dtype> bounds)
+      : ShapeSpec(sizeof(dtype), std::move(shape)) {
+    CHECK_EQ(bounds.size(), 2);
+    auto it = bounds.begin();
+    this->bounds = {it[0], it[1]};
+  }
+  Spec(const std::vector<int>& shape, std::initializer_list<dtype> bounds)
+      : ShapeSpec(sizeof(dtype), shape) {
+    CHECK_EQ(bounds.size(), 2);
+    auto it = bounds.begin();
+    this->bounds = {it[0], it[1]};
+  }
+  Spec(std::initializer_list<int> shape, std::initializer_list<dtype> bounds)
+      : ShapeSpec(sizeof(dtype), std::vector<int>(shape)) {
+    CHECK_EQ(bounds.size(), 2);
+    auto it = bounds.begin();
+    this->bounds = {it[0], it[1]};
+  }
 
   /* init with elementwise bounds */
   Spec(std::vector<int>&& shape,
@@ -90,6 +114,12 @@ class Spec : public ShapeSpec {
     return Spec(std::move(new_shape));
   }
 };
+
+template <typename D>
+Spec<D> MarkDiscrete(Spec<D> spec) {
+  spec.is_discrete = true;
+  return spec;
+}
 
 template <typename dtype>
 class TArray;

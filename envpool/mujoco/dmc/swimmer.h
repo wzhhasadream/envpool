@@ -50,11 +50,14 @@ std::string GetSwimmerXML(const std::string& base_path,
 class SwimmerEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(15),
+    return MakeDict("frame_skip"_.Bind(15), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("swimmer6")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     const std::string task_name = conf["task_name"_];
     int n_bodies = 3;
     if (task_name == "swimmer6") {
@@ -65,9 +68,13 @@ class SwimmerEnvFns {
       throw std::runtime_error("Unknown task_name " + task_name +
                                " for dmc swimmer.");
     }
-    return MakeDict("obs:joints"_.Bind(Spec<mjtNum>({n_bodies - 1})),
-                    "obs:to_target"_.Bind(Spec<mjtNum>({2})),
-                    "obs:body_velocities"_.Bind(Spec<mjtNum>({3 * n_bodies}))
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "obs:joints"_.Bind(StackSpec(Spec<mjtNum>({n_bodies - 1}),
+                                                 conf["frame_stack"_])),
+                    "obs:to_target"_.Bind(
+                        StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_])),
+                    "obs:body_velocities"_.Bind(StackSpec(
+                        Spec<mjtNum>({3 * n_bodies}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
                         ,
                     "info:qpos0"_.Bind(Spec<mjtNum>({n_bodies + 2})),
@@ -90,21 +97,36 @@ class SwimmerEnvFns {
 };
 
 using SwimmerEnvSpec = EnvSpec<SwimmerEnvFns>;
+using SwimmerPixelEnvFns = PixelObservationEnvFns<SwimmerEnvFns>;
+using SwimmerPixelEnvSpec = EnvSpec<SwimmerPixelEnvFns>;
 
-class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class SwimmerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   int id_head_, id_nose_, id_target_, id_target_light_;
 #ifdef ENVPOOL_TEST
   std::array<mjtNum, 2> target0_;
 #endif
 
  public:
-  SwimmerEnv(const Spec& spec, int env_id)
-      : Env<SwimmerEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  SwimmerEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
             GetSwimmerXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_]),
+            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         id_head_(mj_name2id(model_, mjOBJ_GEOM, "head")),
         id_nose_(mj_name2id(model_, mjOBJ_GEOM, "nose")),
         id_target_(mj_name2id(model_, mjOBJ_GEOM, "target")),
@@ -134,13 +156,13 @@ class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -153,23 +175,34 @@ class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
   bool TaskShouldTerminateEpisode() override { return false; }
 
  private:
-  void WriteState() {
-    const auto& joints = Joints();
-    const auto& to_target = NoseToTarget();
-    const auto& body_velocities = BodyVelocities();
-
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    state["obs:joints"_].Assign(joints.data(), joints.size());
-    state["obs:to_target"_].Assign(to_target.begin(), to_target.size());
-    state["obs:body_velocities"_].Assign(body_velocities.data(),
-                                         body_velocities.size());
-    // info
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& joints = Joints();
+      const auto& to_target = NoseToTarget();
+      const auto& body_velocities = BodyVelocities();
+
+      auto obs_joints = state["obs:joints"_];
+      AssignObservation("obs:joints", &obs_joints, joints.data(), joints.size(),
+                        reset);
+      auto obs_to_target = state["obs:to_target"_];
+      AssignObservation("obs:to_target", &obs_to_target, to_target.data(),
+                        to_target.size(), reset);
+      auto obs_body_velocities = state["obs:body_velocities"_];
+      AssignObservation("obs:body_velocities", &obs_body_velocities,
+                        body_velocities.data(), body_velocities.size(), reset);
+    }
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
-    state["info:target0"_].Assign(target0_.begin(), target0_.size());
+    state["info:target0"_].Assign(target0_.data(), target0_.size());
 #endif
   }
 
@@ -219,7 +252,10 @@ class SwimmerEnv : public Env<SwimmerEnvSpec>, public MujocoEnv {
   }
 };
 
+using SwimmerEnv = SwimmerEnvBase<SwimmerEnvSpec, false>;
+using SwimmerPixelEnv = SwimmerEnvBase<SwimmerPixelEnvSpec, true>;
 using SwimmerEnvPool = AsyncEnvPool<SwimmerEnv>;
+using SwimmerPixelEnvPool = AsyncEnvPool<SwimmerPixelEnv>;
 
 }  // namespace mujoco_dmc
 

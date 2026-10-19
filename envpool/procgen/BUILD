@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
+load("//third_party:common.bzl", "copy_to_directory")
 
 package(default_visibility = ["//visibility:public"])
 
-genrule(
+copy_to_directory(
     name = "gen_procgen_assets",
     srcs = ["@procgen//:procgen_assets"],
-    outs = ["assets"],
-    cmd = "mkdir -p $(OUTS) && cp -r $(SRCS) $(OUTS)",
+    out = "assets",
+    strip_prefix = "data/assets/",
 )
 
 cc_library(
@@ -32,6 +35,7 @@ cc_library(
     ],
     deps = [
         "//envpool/core:async_envpool",
+        "//envpool/utils:image_process",
         "@procgen",
     ],
 )
@@ -41,6 +45,7 @@ cc_test(
     srcs = ["procgen_env_test.cc"],
     deps = [
         ":procgen_env",
+        "//envpool/core:logging",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -48,9 +53,12 @@ cc_test(
 pybind_extension(
     name = "procgen_envpool",
     srcs = ["procgen_envpool.cc"],
-    linkopts = [
-        "-ldl",
-    ],
+    linkopts = select({
+        "//:windows": [],
+        "//conditions:default": [
+            "-ldl",
+        ],
+    }),
     deps = [
         ":procgen_env",
         "//envpool/core:py_envpool",
@@ -60,26 +68,45 @@ pybind_extension(
 py_library(
     name = "procgen",
     srcs = ["__init__.py"],
-    data = [":procgen_envpool.so"],
+    data = [
+        ":gen_procgen_assets",
+        ":procgen_envpool",
+    ],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
 py_library(
     name = "procgen_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = [
         "//envpool:registration",
     ],
 )
 
 py_test(
-    name = "procgen_test",
-    srcs = ["procgen_test.py"],
+    name = "procgen_render_test",
+    size = "enormous",
+    srcs = ["procgen_render_test.py"],
+    imports = ["../.."],
     deps = [
         ":procgen",
         ":procgen_registration",
         requirement("numpy"),
         requirement("absl-py"),
-        requirement("gym"),
+    ],
+)
+
+py_test(
+    name = "procgen_test",
+    srcs = ["procgen_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":procgen",
+        ":procgen_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+        requirement("gymnasium"),
     ],
 )

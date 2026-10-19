@@ -12,22 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "classic_control_env",
+    srcs = ["render_utils.cc"],
     hdrs = [
         "acrobot.h",
         "cartpole.h",
         "mountain_car.h",
         "mountain_car_continuous.h",
         "pendulum.h",
+        "render_utils.h",
     ],
     deps = [
         "//envpool/core:async_envpool",
+        "@opencv",
     ],
 )
 
@@ -43,13 +48,15 @@ pybind_extension(
 py_library(
     name = "classic_control",
     srcs = ["__init__.py"],
-    data = [":classic_control_envpool.so"],
+    data = [":classic_control_envpool"],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
 py_library(
     name = "classic_control_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = [
         "//envpool:registration",
     ],
@@ -59,12 +66,28 @@ py_test(
     name = "classic_control_test",
     size = "enormous",
     srcs = ["classic_control_test.py"],
+    imports = ["../.."],
     deps = [
         ":classic_control",
         ":classic_control_registration",
         requirement("absl-py"),
         requirement("dm_env"),
-        requirement("gym"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+        requirement("pygame"),
+    ],
+)
+
+py_test(
+    name = "classic_control_render_test",
+    size = "enormous",
+    srcs = ["classic_control_render_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":classic_control",
+        ":classic_control_registration",
+        requirement("absl-py"),
+        requirement("gymnasium"),
         requirement("numpy"),
         requirement("pygame"),
     ],

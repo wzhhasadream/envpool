@@ -10,15 +10,18 @@ batched environments:
 
 * ``task_id (str)``: task id, use ``envpool.list_all_envs()`` to see all
   support tasks;
-* ``env_type (str)``: generate with ``gym.Env`` or ``dm_env.Environment``
-  interface, available options are ``dm``, ``gym``, and ``gymnasium``;
+* ``env_type (str)``: generate with the Gymnasium-compatible wrapper or
+  ``dm_env.Environment`` interface, available options are ``dm``, ``gym``, and
+  ``gymnasium``;
 * ``num_envs (int)``: how many envs are in the envpool, default to ``1``;
 * ``batch_size (int)``: async configuration, see the last section, default
   to ``num_envs``;
 * ``num_threads (int)``: the maximum thread number for executing the actual
   ``env.step``, default to ``batch_size``;
-* ``seed (int)``: set seed over all environments. The i-th environment seed
-  will be set with i+seed, default to ``42``;
+* ``seed (int | Sequence[int])``: set seed over all environments. If an int is
+  provided, the i-th environment seed will be set with i+seed. If a sequence
+  is provided, it must contain exactly one seed per environment. The default is
+  ``42``;
 * ``max_episode_steps (int)``: set the max steps in one episode. This value is
   env-specific (27000 steps or 27000 * 4 = 108000 frames in Atari for
   example);
@@ -28,25 +31,94 @@ batched environments:
   means not to use thread affinity in thread pool, and this is the default
   behavior;
 * ``reward_threshold (float)``: the reward threshold for solving this
-  environment; this option comes from ``env.spec.reward_threshold`` in
-  ``gym.Env``, while some environments may not have such an option;
-* ``gym_reset_return_info (bool)``: whether to return a tuple of
-  ``(obs, info)`` instead of only ``obs`` when calling reset in ``gym.Env``,
-  defaults to ``False`` if you are using Gym<0.26.0, otherwise it defaults
-  to ``True``; this option is to adapt the newest version of gym's
-  interface;
+  environment; this option comes from ``env.spec.reward_threshold`` in the
+  Gymnasium API, while some environments may not have such an option;
+* ``gym_reset_return_info (bool)``: a deprecated compatibility flag kept in the
+  config schema. EnvPool's ``gym`` wrapper follows Gymnasium reset semantics and
+  always returns ``(obs, info)``; passing ``False`` raises ``ValueError``;
+* ``render_mode (str | None)``: render behavior exposed by the Python wrapper.
+  Available options are ``None`` (default), ``"rgb_array"``, and ``"human"``;
+* ``render_env_id (int)``: default env id used by ``env.render()`` when
+  ``env_ids`` is omitted, default to ``0``;
+* ``render_width`` / ``render_height``: fixed output size for ``render()``.
+  If omitted, the environment-specific default render size is used;
+* ``render_camera_id (int)``: default camera id used by ``render()``, default
+  to ``-1``;
+* ``from_pixels (bool)``: for MuJoCo tasks, expose native C++
+  render-backed pixel observations through the normal observation API instead
+  of the environment's state observations;
 * other configurations such as ``img_height`` / ``img_width`` / ``stack_num``
   / ``frame_skip`` / ``noop_max`` in Atari env, ``reward_metric`` /
   ``lmp_save_dir`` in ViZDoom env, please refer to the corresponding pages.
 
-The observation space and action space of resulted environment are
-**channel-first** single environment's space, but each time the
-observation/action's first dimension is always equal to ``num_envs``
-(sync mode) or equal to ``batch_size`` (async mode).
+Gymnasium pools expose the standard vector-environment spaces:
+
+* ``single_observation_space`` and ``single_action_space`` describe one
+  environment, using the original ``EnvSpec`` spaces;
+* ``observation_space`` and ``action_space`` describe the full ``num_envs``
+  batch, using Gymnasium's ``batch_space``. A single ``Discrete(n)`` action
+  becomes ``MultiDiscrete([n] * num_envs)``; a single ``Box`` with shape
+  ``(A,)`` becomes a ``Box`` with shape ``(num_envs, A)``. ``Dict`` spaces
+  retain their keys and batch each leaf;
+* ``num_envs`` and ``is_vector_env`` identify the vector environment.
+
+Gymnasium may normalize ``Dict`` key order when batching. Flatten observations
+using their corresponding space rather than assuming that the single and
+batched spaces have identical key iteration order.
+
+For a full synchronous single-player step, use the sampled batch directly:
+
+.. code-block:: python
+
+    env = envpool.make_gymnasium("HalfCheetah-v4", num_envs=4)
+    obs, info = env.reset()
+    obs, reward, terminated, truncated, info = env.step(
+        env.action_space.sample()
+    )
+
+The spaces always describe ``num_envs`` slots, even when ``batch_size`` is
+smaller or an explicit subset of IDs is reset or stepped. Such results have a
+variable leading batch dimension and are an EnvPool extension to Gymnasium's
+full-vector interface. Route subsequent actions with ``info["env_id"]`` and
+construct a matching action batch. A full ``action_space.sample()`` is not a
+partial-receive sample:
+
+.. code-block:: python
+
+    from gymnasium.vector.utils import batch_space
+
+    env = envpool.make_gymnasium(
+        "HalfCheetah-v4", num_envs=8, batch_size=4
+    )
+    env.async_reset()
+    obs, reward, terminated, truncated, info = env.recv()
+    env_ids = info["env_id"]
+    actions = batch_space(env.single_action_space, len(env_ids)).sample()
+    env.send(actions, env_ids)
+
+When migrating code that previously read a pool's ``action_space.n``, used its
+single-action shape, or manually stacked one sample per slot, read
+``single_action_space`` instead. Likewise, read ``single_observation_space``
+when constructing a model for one observation. ``make_spec`` spaces and
+``dm_env`` specs remain single-environment specifications.
+
+Multi-player environments are also an EnvPool extension: their native
+per-player fields can have a dynamic leading player count rather than
+``num_envs``. The static Gymnasium spaces do not represent these ragged
+batches. Use the native ``info["players"]["env_id"]`` mapping and explicit
+player action routing for those environments; do not assume a full-pool
+space sample contains the required number of player actions.
 
 ``envpool.make_gym``, ``envpool.make_dm``, and ``envpool.make_gymnasium`` are
 shortcuts for ``envpool.make(..., env_type="gym" | "dm" | "gymnasium")``,
 respectively.
+
+Optional Gymnasium adapters
+---------------------------
+
+For explicit same-step autoreset and ``[B, F, H, W, C]`` pixel observations,
+see :doc:`gymnasium_wrappers`. These wrappers preserve the default native API
+and can be composed in either order.
 
 envpool.make_spec
 -----------------
@@ -77,7 +149,8 @@ add another two primitives ``send`` and ``recv``:
   be numpy array (single observation) or a dict (multiple observations);
 * ``recv() -> Union[TimeStep, Tuple[Any, np.ndarray, np.ndarray, np.ndarray]]``
   : receive the finished env ids (in ``timestep.observation.obs.env_id`` (dm)
-  or ``info["env_id"]`` (gym)) and corresponding result from executor;
+  or ``info["env_id"]`` (gym / gymnasium)) and corresponding result from
+  executor;
 * ``step(action: Any, env_id: Optional[np.ndarray] = None) -> Union[TimeStep,
   Tuple[Any, np.ndarray, np.ndarray, Any]]``: given an action, an env (maybe
   with player) id list where ``len(action) == len(env_id)``, the envpool will
@@ -86,6 +159,130 @@ add another two primitives ``send`` and ``recv``:
   result that finished stepping.
 
 In short, ``step(action, env_id)`` == ``send(action, env_id); return recv()``
+
+
+Rendering
+---------
+
+EnvPool exposes rendering through the Python wrapper. When creating an env with
+``render_mode="rgb_array"``, calling ``render()`` returns a batch of RGB frames
+with shape ``(B, H, W, 3)`` and data type ``uint8``. Even a single env render keeps
+the batch dimension, so ``env.render()`` returns ``(1, H, W, 3)`` by default.
+
+``render_mode="human"`` uses the same renderer, but displays the frame through
+OpenCV in Python and returns ``None``. Human mode currently supports only a
+single env id per call.
+
+The render API is:
+
+* ``render(env_ids: int | Sequence[int] | None = None, camera_id: int | None = None)``
+
+If ``env_ids`` is omitted, EnvPool renders ``render_env_id``. The output size
+is fixed when the env is created via ``render_width`` / ``render_height``;
+``render()`` itself does not take a runtime resize argument.
+
+Example:
+::
+
+    env = envpool.make(
+        "Ant-v5",
+        env_type="gymnasium",
+        num_envs=4,
+        render_mode="rgb_array",
+        render_width=480,
+        render_height=480,
+    )
+    env.reset()
+    frames = env.render(env_ids=[0, 2])
+    assert frames.shape == (2, 480, 480, 3)
+
+    viewer = envpool.make(
+        "WalkerWalk-v1",
+        env_type="gymnasium",
+        num_envs=1,
+        render_mode="human",
+        render_env_id=0,
+    )
+    viewer.reset()
+    viewer.render()
+
+Representative first-frame compares for EnvPool families that support
+rendering. In each
+panel, EnvPool is on the left and the reference output is on the right. For
+Box2D, Classic Control, MiniGrid, MuJoCo, Gymnasium-Robotics, and MyoSuite,
+the reference is the upstream Python renderer. For Atari, Procgen, and
+VizDoom, the reference is the exact in-tree render oracle used by the test
+suite. Google Research Football is intentionally excluded here because its
+render API is unsupported.
+
+.. image:: ../_static/render_samples/atari_oracle_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/box2d_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/classic_control_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/minigrid_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/procgen_oracle_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/mujoco_gym_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/gymnasium_robotics_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/mujoco_dmc_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/myosuite_myobase_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/myosuite_myochallenge_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/myosuite_myodm_official_compare.png
+    :width: 900px
+    :align: center
+
+.. image:: ../_static/render_samples/vizdoom_oracle_compare.png
+    :width: 900px
+    :align: center
+
+Pixel Observations
+------------------
+
+When ``from_pixels=True`` is passed to ``envpool.make`` / ``make_dm`` /
+``make_gym`` / ``make_gymnasium`` for MuJoCo tasks, EnvPool uses a native C++
+render path to populate the public observation API.
+
+For Gym and Gymnasium wrappers, the returned observation becomes a ``uint8``
+tensor in channel-first layout: ``(B, 3, H, W)`` when ``frame_stack == 1`` and
+``(B, 3 * frame_stack, H, W)`` otherwise. The ``info`` dictionary remains
+unchanged.
+
+For the dm_env wrapper, the timestep observation keeps the usual info fields
+such as ``env_id`` while replacing the state observation payload with a
+``pixels`` field.
+
+``frame_stack`` is applied on the channel dimension, so the observation surface
+matches the usual PyTorch ``BCHW`` convention directly. If ``render_width`` /
+``render_height`` are omitted, EnvPool defaults both to ``84`` so the
+resulting observation spec is fully defined up front.
 
 
 Action Input Format
@@ -118,17 +315,20 @@ third case, use ``env.step(action)`` where action is a dictionary.
 Data Output Format
 ------------------
 
-+----------+----------------------------------------------------------------------+------------------------------------------------------------------+
-| function |   gym & gymnasium                                                    | dm                                                               |
-|          |                                                                      |                                                                  |
-+==========+======================================================================+==================================================================+
-|   reset  |  | env_id -> obs array (single observation)                          | env_id -> TimeStep(FIRST, obs|info|env_id, rew=0, discount or 1) |
-|          |  | or an obs dict (multi observation)                                |                                                                  |
-|          |  | or (obs, info) tuple (when ``gym_reset_return_info`` == True)     |                                                                  |
-+----------+----------------------------------------------------------------------+------------------------------------------------------------------+
-|   step   |  (obs, rew, done, info|env_id) or                                    | TimeStep(StepType, obs|info|env_id, rew, discount or 1 - done)   |
-|          |  (obs, rew, terminated, truncated, info|env_id) (when Gym >= 0.26.0) |                                                                  |
-+----------+----------------------------------------------------------------------+------------------------------------------------------------------+
+.. list-table::
+   :header-rows: 1
+
+   * - function
+     - gym / gymnasium
+     - dm
+   * - reset
+     - ``(obs, info)`` where ``obs`` is an obs array or dict and
+       ``info["env_id"]`` stores the finished env ids
+     - env_id -> TimeStep(FIRST, obs|info|env_id, rew=0, discount or 1)
+   * - step
+     - ``(obs, rew, terminated, truncated, info)`` where
+       ``info["env_id"]`` stores the finished env ids
+     - TimeStep(StepType, obs|info|env_id, rew, discount or 1 - done)
 
 Note: ``gym.reset()`` doesn't support async step setting because it cannot get
 ``env_id`` from ``reset()`` function, so it's better to use low-level APIs such
@@ -162,8 +362,7 @@ times, the following would happen:
 2. the second call would trigger ``env.step(action)`` and elapsed step is 1;
 3. the third call would trigger ``env.step(action)`` and elapsed step is 2;
 4. the fourth call would trigger ``env.step(action)`` and elapsed step is 3.
-   At this time it returns ``done = True`` and (if using gym)
-   ``info["TimeLimit.truncated"] = True``;
+   At this time it returns ``truncated = True``;
 5. the fifth call would trigger ``env.reset()`` since the last episode has
    finished, and return with ``done = False`` and ``reward = 0``, i.e., the
    action will be discarded.

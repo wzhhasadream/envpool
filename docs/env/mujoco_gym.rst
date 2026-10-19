@@ -1,45 +1,62 @@
 Mujoco (gym)
 ============
 
-We use ``mujoco==2.2.1`` as the codebase.
-See https://github.com/deepmind/mujoco/tree/2.2.1
+For native ``action_repeat`` configuration and stepping semantics, see
+:doc:`mujoco_action_repeat`.
 
-The implementation follows OpenAI gym \*-v4 environment, see
-`reference <https://github.com/openai/gym/tree/master/gym/envs/mujoco>`_.
+We use ``mujoco==3.6.0`` as the codebase.
+See https://github.com/google-deepmind/mujoco/tree/3.6.0
 
-You can set ``post_constraint`` to ``False`` to disable the bug fix with
-`this issue <https://github.com/openai/gym/issues/2593>`_, which is \*-v3
-environments' standard approach.
+The implementation follows Gymnasium \*-v4/\*-v5 environments, see
+`reference <https://github.com/Farama-Foundation/Gymnasium/tree/v1.2.3/gymnasium/envs/mujoco>`_.
+
+EnvPool exposes the current official Gymnasium task IDs (\*-v4 and \*-v5) and
+keeps the historical \*-v2/\*-v3 IDs as backward-compatible aliases where they
+existed previously.
+Set ``post_constraint=False`` to match the pre-v5 observation behavior where
+applicable.
 
 
-Ant-v3/v4
+Render Compare
+--------------
+
+Representative first-frame compares for MuJoCo gym tasks that support
+rendering. In each panel, EnvPool is on the left and the Gymnasium reference
+renderer is on the right.
+
+.. image:: ../_static/render_samples/mujoco_gym_official_compare.png
+    :width: 900px
+    :align: center
+
+
+Ant-v4/v5
 ---------
 
-`gym Ant-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/ant_v3.py>`_
+`gymnasium Ant-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/ant_v4.py>`_
 
-`gym Ant-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/ant_v4.py>`_
+`gymnasium Ant-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/ant_v5.py>`_
 
-- Observation space (v3): ``(111)``, first 13 elements for ``qpos[2:]``, next
-  14 elements for ``qvel``, other elements for clipped ``cfrc_ext`` (com-based
-  external force on body, a.k.a. contact force);
-- Observation space (v4): ``(27)``, first 13 elements for ``qpos[2:]``, next
-  14 elements for ``qvel``;
+- Observation space (v4/v5): ``(27)``, first 13 elements for ``qpos[2:]``,
+  next 14 elements for ``qvel``;
 - Action space: ``(8)``, with range ``[-1, 1]``;
 - ``frame_skip``: 5;
 - ``max_episode_steps``: 1000;
 - ``reward_threshold``: 6000.0;
 
+The legacy ``Ant-v3`` alias keeps the historical 111-dimensional observation
+that includes clipped ``cfrc_ext`` contact-force features.
 
-HalfCheetah-v3/v4
+
+HalfCheetah-v4/v5
 -----------------
 
-`gym HalfCheetah-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/half_cheetah_v3.py>`_
+`gymnasium HalfCheetah-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/half_cheetah_v4.py>`_
 
-`gym HalfCheetah-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/half_cheetah_v4.py>`_
+`gymnasium HalfCheetah-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/half_cheetah_v5.py>`_
 
 - Observation space: ``(17)``, first 8 elements for ``qpos[1:]``, next 9
   elements for ``qvel``;
@@ -49,14 +66,14 @@ HalfCheetah-v3/v4
 - ``reward_threshold``: 4800.0;
 
 
-Hopper-v3/v4
+Hopper-v4/v5
 ------------
 
-`gym Hopper-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/hopper_v3.py>`_
+`gymnasium Hopper-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/hopper_v4.py>`_
 
-`gym Hopper-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/hopper_v4.py>`_
+`gymnasium Hopper-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/hopper_v5.py>`_
 
 - Observation space: ``(11)``, first 5 elements for ``qpos[1:]``, next 6
   elements for ``qvel``;
@@ -66,20 +83,20 @@ Hopper-v3/v4
 - ``reward_threshold``: 6000.0;
 
 
-Humanoid-v3/v4, HumanoidStandup-v2/v4
+Humanoid-v4/v5, HumanoidStandup-v4/v5
 -------------------------------------
 
-`gym Humanoid-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/humanoid_v3.py>`_
+`gymnasium Humanoid-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/humanoid_v4.py>`_
 
-`gym Humanoid-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/humanoid_v4.py>`_
+`gymnasium Humanoid-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/humanoid_v5.py>`_
 
-`gym HumanoidStandup-v2 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/humanoidstandup.py>`_
+`gymnasium HumanoidStandup-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/humanoidstandup_v4.py>`_
 
-`gym HumanoidStandup-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/humanoidstandup_v4.py>`_
+`gymnasium HumanoidStandup-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/humanoidstandup_v5.py>`_
 
 - Observation space: ``(376)``, first 22 elements for ``qpos[2:]``, next 23
   elements for ``qvel``, next 140 elements for ``cinert`` (com-based body
@@ -91,14 +108,14 @@ Humanoid-v3/v4, HumanoidStandup-v2/v4
 - ``max_episode_steps``: 1000;
 
 
-InvertedDoublePendulum-v2/v4
+InvertedDoublePendulum-v4/v5
 ----------------------------
 
-`gym InvertedDoublePendulum-v2 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/inverted_double_pendulum.py>`_
+`gymnasium InvertedDoublePendulum-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/inverted_double_pendulum_v4.py>`_
 
-`gym InvertedDoublePendulum-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/inverted_double_pendulum_v4.py>`_
+`gymnasium InvertedDoublePendulum-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/inverted_double_pendulum_v5.py>`_
 
 - Observation space: ``(11)``, first 1 element for ``qpos[0]``, next 2
   elements for ``sin(qpos[1:])``, next 2 elements for ``cos(qpos[1:])``,
@@ -109,14 +126,14 @@ InvertedDoublePendulum-v2/v4
 - ``reward_threshold``: 9100.0;
 
 
-InvertedPendulum-v2/v4
+InvertedPendulum-v4/v5
 ----------------------
 
-`gym InvertedPendulum-v2 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/inverted_pendulum.py>`_
+`gymnasium InvertedPendulum-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/inverted_pendulum_v4.py>`_
 
-`gym InvertedPendulum-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/inverted_pendulum_v4.py>`_
+`gymnasium InvertedPendulum-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/inverted_pendulum_v5.py>`_
 
 - Observation space: ``(4)``, first 2 elements for ``qpos``, next 2 elements
   for ``qvel``;
@@ -126,14 +143,14 @@ InvertedPendulum-v2/v4
 - ``reward_threshold``: 950.0;
 
 
-Pusher-v2/v4
+Pusher-v4/v5
 ------------
 
-`gym Pusher-v2 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/pusher.py>`_
+`gymnasium Pusher-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/pusher_v4.py>`_
 
-`gym Pusher-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/pusher_v4.py>`_
+`gymnasium Pusher-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/pusher_v5.py>`_
 
 - Observation space: ``(23)``, first 7 elements for ``qpos[:7]``, next 7
   elements for ``qvel[:7]``, next 3 elements for ``tips_arm``, next 3
@@ -143,15 +160,20 @@ Pusher-v2/v4
 - ``max_episode_steps``: 100;
 - ``reward_threshold``: 0.0;
 
+Gymnasium's official ``Pusher-v4`` reference env raises ``ImportError`` under
+``mujoco>=3``. EnvPool still exposes the official task ID for compatibility,
+and the parity test only validates space alignment when Gymnasium's reference
+can be instantiated.
 
-Reacher-v2/v4
+
+Reacher-v4/v5
 -------------
 
-`gym Reacher-v2 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/reacher.py>`_
+`gymnasium Reacher-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/reacher_v4.py>`_
 
-`gym Reacher-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/reacher_v4.py>`_
+`gymnasium Reacher-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/reacher_v5.py>`_
 
 - Observation space: ``(11)``, first 2 elements for ``cos(qpos[:2])``, next 2
   elements for ``sin(qpos[:2])``, next 2 elements for ``qpos[2:]``, next 2
@@ -163,14 +185,14 @@ Reacher-v2/v4
 - ``reward_threshold``: -3.75;
 
 
-Swimmer-v3/v4
+Swimmer-v4/v5
 -------------
 
-`gym Swimmer-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/swimmer_v3.py>`_
+`gymnasium Swimmer-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/swimmer_v4.py>`_
 
-`gym Swimmer-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/swimmer_v4.py>`_
+`gymnasium Swimmer-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/swimmer_v5.py>`_
 
 - Observation space: ``(8)``, first 3 elements for ``qpos[2:]``, next 5
   elements for ``qvel``;
@@ -180,14 +202,14 @@ Swimmer-v3/v4
 - ``reward_threshold``: 360.0;
 
 
-Walker2d-v3/v4
+Walker2d-v4/v5
 --------------
 
-`gym Walker2d-v3 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/walker2d_v3.py>`_
+`gymnasium Walker2d-v4 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/walker2d_v4.py>`_
 
-`gym Walker2d-v4 source code
-<https://github.com/openai/gym/blob/master/gym/envs/mujoco/walker2d_v4.py>`_
+`gymnasium Walker2d-v5 source code
+<https://github.com/Farama-Foundation/Gymnasium/blob/v1.2.3/gymnasium/envs/mujoco/walker2d_v5.py>`_
 
 - Observation space: ``(17)``, first 8 elements for ``qpos[1:]``, next 9
   elements for ``qvel``;

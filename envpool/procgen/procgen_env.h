@@ -25,6 +25,7 @@
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
+#include "envpool/utils/image_process.h"
 #include "game.h"
 
 namespace procgen {
@@ -36,6 +37,7 @@ namespace procgen {
    QT build needs: sudo apt update && sudo apt install qtdeclarative5-dev
  */
 static const int kRes = 64;
+static const int kExplorationMode = 20;
 static std::once_flag procgen_global_init_flag;
 
 void ProcgenGlobalInit(std::string path) {
@@ -54,6 +56,44 @@ std::size_t HashStrUint32(const std::string& str) {
     hash *= prime;
   }
   return hash;
+}
+
+int GetExplorationLevelSeed(const std::string& env_name) {
+  if (env_name == "coinrun") {
+    return 1949448038;
+  }
+  if (env_name == "caveflyer") {
+    return 1259048185;
+  }
+  if (env_name == "leaper") {
+    return 1318677581;
+  }
+  if (env_name == "jumper") {
+    return 1434825276;
+  }
+  if (env_name == "maze") {
+    return 158988835;
+  }
+  if (env_name == "heist") {
+    return 876640971;
+  }
+  if (env_name == "climber") {
+    return 1561126160;
+  }
+  if (env_name == "ninja") {
+    return 1123500215;
+  }
+  return -1;
+}
+
+int GetLevelSeedRandGenSeed(int rand_seed, int env_id) {
+  RandGen game_level_seed_gen;
+  game_level_seed_gen.seed(rand_seed);
+  int level_seed_rand_gen_seed = 0;
+  for (int i = 0; i <= env_id; ++i) {
+    level_seed_rand_gen_seed = game_level_seed_gen.randint();
+  }
+  return level_seed_rand_gen_seed;
 }
 
 class ProcgenEnvFns {
@@ -92,7 +132,7 @@ class ProcgenEnvFns {
 using ProcgenEnvSpec = EnvSpec<ProcgenEnvFns>;
 using FrameSpec = Spec<uint8_t>;
 
-class ProcgenEnv : public Env<ProcgenEnvSpec> {
+class ProcgenEnv : public Env<ProcgenEnvSpec>, public RenderableEnv {
  protected:
   std::shared_ptr<Game> game_;
   std::string env_name_;
@@ -119,13 +159,27 @@ class ProcgenEnv : public Env<ProcgenEnvSpec> {
      */
     std::call_once(procgen_global_init_flag, ProcgenGlobalInit,
                    spec.config["base_path"_] + "/procgen/assets/");
-    // CHECK_NE(globalGameRegistry, nullptr);
-    // game_ = globalGameRegistry->at(env_name_)();
-    game_ = make_game(spec.config["env_name"_]);
+    CHECK_NE(globalGameRegistry, nullptr);
+    game_ = globalGameRegistry->at(env_name_)();
     CHECK_EQ(game_->game_name, env_name_);
-    game_->level_seed_rand_gen.seed(seed_);
+    int level_seed_rand_gen_seed = seed_;
+    if (spec.config["env_seed"_].empty()) {
+      level_seed_rand_gen_seed =
+          GetLevelSeedRandGenSeed(spec.config["seed"_], env_id);
+    }
+    game_->level_seed_rand_gen.seed(level_seed_rand_gen_seed);
     int num_levels = spec.config["num_levels"_];
     int start_level = spec.config["start_level"_];
+    int distribution_mode = spec.config["distribution_mode"_];
+    if (distribution_mode == kExplorationMode) {
+      CHECK_EQ(num_levels, 0) << "exploration mode overrides num_levels";
+      CHECK_EQ(start_level, 0) << "exploration mode overrides start_level";
+      num_levels = 1;
+      start_level = GetExplorationLevelSeed(env_name_);
+      CHECK_NE(start_level, -1)
+          << env_name_ << " does not support exploration mode";
+      distribution_mode = static_cast<int>(HardMode);
+    }
     if (num_levels <= 0) {
       game_->level_seed_low = 0;
       game_->level_seed_high = std::numeric_limits<int>::max();
@@ -141,7 +195,7 @@ class ProcgenEnv : public Env<ProcgenEnvSpec> {
     // buffers for the game to outwrite observations each step
     game_->reward_ptr = &reward_;
     game_->first_ptr = &done_;
-    game_->obs_bufs.emplace_back(static_cast<void*>(obs_.Data()));
+    game_->obs_bufs.emplace_back(obs_.Data());
     game_->info_bufs.emplace_back(static_cast<void*>(&level_seed_));
     game_->info_bufs.emplace_back(static_cast<void*>(&prev_level_seed_));
     game_->info_bufs.emplace_back(static_cast<void*>(&prev_level_complete_));
@@ -160,7 +214,7 @@ class ProcgenEnv : public Env<ProcgenEnvSpec> {
     game_->options.use_sequential_levels =
         spec.config["use_sequential_levels"_];
     game_->options.distribution_mode =
-        static_cast<DistributionMode>(spec.config["distribution_mode"_]);
+        static_cast<DistributionMode>(distribution_mode);
     game_->game_init();
   }
 
@@ -181,9 +235,23 @@ class ProcgenEnv : public Env<ProcgenEnvSpec> {
 
   bool IsDone() override { return done_ != 0; }
 
+  std::pair<int, int> RenderSize(int width, int height) const override {
+    return {width > 0 ? width : kRes, height > 0 ? height : kRes};
+  }
+
+  void Render(int width, int height, int /*camera_id*/,
+              unsigned char* rgb) override {
+    Array output(FrameSpec({height, width, 3}), reinterpret_cast<char*>(rgb));
+    if (width == kRes && height == kRes) {
+      output.Assign(obs_);
+    } else {
+      Resize(obs_, &output, false);
+    }
+  }
+
  private:
   void WriteObs() {
-    State state = Allocate();
+    auto state = Allocate();
     if (channel_first_) {
       // convert from HWC to CHW
       auto* data = static_cast<uint8_t*>(state["obs"_].Data());

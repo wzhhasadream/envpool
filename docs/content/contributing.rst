@@ -19,14 +19,21 @@ Lint Check
 
 We use several tools to secure code quality, including
 
-- PEP8 code style: flake8, yapf, isort;
+- Python lint and formatting: ruff;
 - Type check: mypy;
 - C++ Google-style: cpplint, clang-format, clang-tidy;
 - Bazel build file: buildifier;
 - License: addlicense;
-- Documentation: pydocstyle, doc8.
+- Documentation: doc8, Sphinx warning checks, and spelling.
 
-To make things easier, we create several shortcuts as follows.
+The most common shortcuts are:
+
+.. code-block:: bash
+
+    make ruff        # Python lint
+    make py-format   # Python formatting check
+    make docstyle    # doc8 + Sphinx warnings
+    make spelling    # Documentation spelling check
 
 To automatically format the code, run:
 
@@ -49,6 +56,23 @@ This command will run automatic tests in the main directory:
 .. code-block:: bash
 
     make bazel-test
+
+To collect a merged Python + C/C++ LCOV report locally, run:
+
+.. code-block:: bash
+
+    make bazel-coverage
+    python3 scripts/coverage_summary.py \
+      --lcov bazel-out/_coverage/_coverage_report.dat \
+      --genhtml-lcov-file coverage/lcov.genhtml.info \
+      --repo-root "$PWD"
+    genhtml coverage/lcov.genhtml.info \
+      --prefix "$PWD" \
+      --branch-coverage \
+      --legend \
+      --output-directory coverage/site
+
+The merged LCOV file is written to ``bazel-out/_coverage/_coverage_report.dat``.
 
 If you only want to debug for Bazel build:
 

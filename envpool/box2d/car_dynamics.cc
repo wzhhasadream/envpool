@@ -19,14 +19,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <utility>
+#include <vector>
 
 namespace box2d {
 
-b2PolygonShape GeneratePolygon(const float (*poly)[2], int size) {  // NOLINT
+template <std::size_t N>
+b2PolygonShape GeneratePolygon(
+    const std::array<std::array<float, 2>, N>& poly) {
   std::vector<b2Vec2> vec_list;
-  vec_list.resize(size);
-  for (int i = 0; i < size; ++i) {
+  vec_list.resize(poly.size());
+  for (std::size_t i = 0; i < poly.size(); ++i) {
     vec_list[i] = b2Vec2(poly[i][0] * kSize, poly[i][1] * kSize);
   }
   b2PolygonShape polygon;
@@ -46,19 +50,19 @@ Car::Car(std::shared_ptr<b2World> world, float init_angle, float init_x,
   hull_ = world_->CreateBody(&bd);
   drawlist_.push_back(hull_);
 
-  b2PolygonShape polygon1 = GeneratePolygon(kHullPoly1, 4);
+  b2PolygonShape polygon1 = GeneratePolygon(kHullPoly1);
   hull_->CreateFixture(&polygon1, 1.f);
 
-  b2PolygonShape polygon2 = GeneratePolygon(kHullPoly2, 4);
+  b2PolygonShape polygon2 = GeneratePolygon(kHullPoly2);
   hull_->CreateFixture(&polygon2, 1.f);
 
-  b2PolygonShape polygon3 = GeneratePolygon(kHullPoly3, 8);
+  b2PolygonShape polygon3 = GeneratePolygon(kHullPoly3);
   hull_->CreateFixture(&polygon3, 1.f);
 
-  b2PolygonShape polygon4 = GeneratePolygon(kHullPoly4, 4);
+  b2PolygonShape polygon4 = GeneratePolygon(kHullPoly4);
   hull_->CreateFixture(&polygon4, 1.f);
 
-  for (const auto* p : kWheelPos) {
+  for (const auto& p : kWheelPos) {
     float wx = p[0];
     float wy = p[1];
 
@@ -67,7 +71,7 @@ Car::Car(std::shared_ptr<b2World> world, float init_angle, float init_x,
     bd.angle = init_angle;
     bd.type = b2_dynamicBody;
 
-    b2PolygonShape polygon = GeneratePolygon(kWheelPoly, 4);
+    b2PolygonShape polygon = GeneratePolygon(kWheelPoly);
     b2FixtureDef fd;
     fd.shape = &polygon;
     fd.density = 0.1;
@@ -99,8 +103,7 @@ Car::Car(std::shared_ptr<b2World> world, float init_angle, float init_x,
     rjd.upperAngle = +0.4;
     rjd.type = b2JointType::e_revoluteJoint;
     w->joint = static_cast<b2RevoluteJoint*>(world_->CreateJoint(&rjd));
-    // w->body->SetUserData(&w);
-    w->body->GetUserData().pointer = reinterpret_cast<uintptr_t>(w);
+    w->body->SetUserData(w);
     wheels_.push_back(w);
   }
 }
@@ -208,8 +211,8 @@ void Car::Step(float dt) {
 
     w->body->ApplyForceToCenter(
         {
-            static_cast<float>(p_force * side.x + f_force * forw.x),
-            static_cast<float>(p_force * side.y + f_force * forw.y),
+            p_force * side.x + f_force * forw.x,
+            p_force * side.y + f_force * forw.y,
         },
         true);
   }
@@ -235,8 +238,8 @@ void Car::Draw(const cv::Mat& surf, float zoom,
       poly.clear();
       for (const auto& vec_tmp : p->poly) {
         auto v = RotateRad(vec_tmp, angle);
-        poly.emplace_back(cv::Point(v.x * zoom + translation[0],
-                                    v.y * zoom + translation[1]));
+        poly.emplace_back(v.x * zoom + translation[0],
+                          v.y * zoom + translation[1]);
       }
       cv::polylines(surf, poly, false, p->color, 2);
     }
@@ -258,13 +261,13 @@ void Car::Draw(const cv::Mat& surf, float zoom,
       for (int j = 0; j < shape->m_count; j++) {
         auto vec_tmp = Multiply(trans, shape->m_vertices[j]);
         auto v = RotateRad(vec_tmp, angle);
-        poly.emplace_back(cv::Point(v.x * zoom + translation[0],
-                                    v.y * zoom + translation[1]));
+        poly.emplace_back(v.x * zoom + translation[0],
+                          v.y * zoom + translation[1]);
       }
       cv::fillPoly(surf, poly, color);
 
       auto* user_data =
-          reinterpret_cast<UserData*>(body->GetUserData().pointer);  // NOLINT
+          reinterpret_cast<UserData*>(body->GetUserData());  // NOLINT
       if (user_data == nullptr || user_data->type != WHEEL_TYPE) {
         continue;
       }
@@ -296,8 +299,8 @@ void Car::Draw(const cv::Mat& surf, float zoom,
       for (const auto& vec : white_poly) {
         auto vec_tmp = Multiply(trans, vec);
         auto v = RotateRad(vec_tmp, angle);
-        poly.emplace_back(cv::Point(v.x * zoom + translation[0],
-                                    v.y * zoom + translation[1]));
+        poly.emplace_back(v.x * zoom + translation[0],
+                          v.y * zoom + translation[1]);
       }
       cv::fillPoly(surf, poly, kWheelWhite);
     }

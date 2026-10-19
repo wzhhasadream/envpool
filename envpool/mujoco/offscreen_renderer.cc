@@ -1,0 +1,828 @@
+// Copyright 2026 Garena Online Private Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "envpool/mujoco/offscreen_renderer.h"
+
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string_view>
+#include <vector>
+
+#if defined(__APPLE__) && __has_include(<OpenGL/OpenGL.h>)
+#include <OpenGL/OpenGL.h>
+#include <OpenGL/gl.h>
+#define ENVPOOL_HAS_CGL 1
+#elif defined(_WIN32) && __has_include(<windows.h>)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#define ENVPOOL_HAS_WGL 1
+#elif defined(__linux__) && __has_include(<EGL/egl.h>)
+#include <EGL/egl.h>
+#include <dlfcn.h>
+#if __has_include(<EGL/eglext.h>)
+#include <EGL/eglext.h>
+#define ENVPOOL_HAS_EGL_DEVICE_EXT 1
+#endif
+#define ENVPOOL_HAS_EGL 1
+#endif
+
+namespace envpool::mujoco {
+
+#if defined(ENVPOOL_HAS_CGL)
+constexpr int kCglFirstFrameSettlePasses = 4;
+#endif
+
+namespace {
+
+mjtNum MedianGeomPosition(const mjData* data, int ngeom, int axis) {
+  std::vector<mjtNum> positions(ngeom);
+  for (int geom_id = 0; geom_id < ngeom; ++geom_id) {
+    positions[geom_id] = data->geom_xpos[geom_id * 3 + axis];
+  }
+  std::sort(positions.begin(), positions.end());
+  int mid = ngeom / 2;
+  if (ngeom % 2 == 0) {
+    return (positions[mid - 1] + positions[mid]) * static_cast<mjtNum>(0.5);
+  }
+  return positions[mid];
+}
+
+}  // namespace
+
+#if defined(ENVPOOL_HAS_CGL)
+
+class CglContext final : public GlContext {
+ public:
+  explicit CglContext(bool prefer_offline_context) {
+    const std::array<CGLPixelFormatAttribute, 17> preferred_attribs = {
+        kCGLPFAOpenGLProfile,
+        static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_Legacy),
+        kCGLPFAColorSize,
+        static_cast<CGLPixelFormatAttribute>(24),
+        kCGLPFAAlphaSize,
+        static_cast<CGLPixelFormatAttribute>(8),
+        kCGLPFADepthSize,
+        static_cast<CGLPixelFormatAttribute>(24),
+        kCGLPFAStencilSize,
+        static_cast<CGLPixelFormatAttribute>(8),
+        kCGLPFAMultisample,
+        kCGLPFASampleBuffers,
+        static_cast<CGLPixelFormatAttribute>(1),
+        kCGLPFASamples,
+        static_cast<CGLPixelFormatAttribute>(4),
+        kCGLPFAAccelerated,
+        static_cast<CGLPixelFormatAttribute>(0),  // terminator
+    };
+    const std::array<CGLPixelFormatAttribute, 13> offline_attribs = {
+        kCGLPFAOpenGLProfile,
+        static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_Legacy),
+        kCGLPFAColorSize,
+        static_cast<CGLPixelFormatAttribute>(24),
+        kCGLPFAAlphaSize,
+        static_cast<CGLPixelFormatAttribute>(8),
+        kCGLPFADepthSize,
+        static_cast<CGLPixelFormatAttribute>(24),
+        kCGLPFAStencilSize,
+        static_cast<CGLPixelFormatAttribute>(8),
+        kCGLPFAAllowOfflineRenderers,
+        static_cast<CGLPixelFormatAttribute>(0),  // value
+        static_cast<CGLPixelFormatAttribute>(0),  // terminator
+    };
+    // Most MuJoCo oracles use the default accelerated CGL format; callers can
+    // still request the offline renderer when an upstream oracle does so.
+    bool chose_pixel_format = prefer_offline_context
+                                  ? ChoosePixelFormat(offline_attribs)
+                                  : ChoosePixelFormat(preferred_attribs);
+    if (!chose_pixel_format) {
+      chose_pixel_format = prefer_offline_context
+                               ? ChoosePixelFormat(preferred_attribs)
+                               : ChoosePixelFormat(offline_attribs);
+    }
+    if (!chose_pixel_format) {
+      throw std::runtime_error("failed to create CGL pixel format");
+    }
+    CGLError err = CGLCreateContext(pixel_format_, nullptr, &context_);
+    if (err != kCGLNoError || context_ == nullptr) {
+      CGLReleasePixelFormat(pixel_format_);
+      pixel_format_ = nullptr;
+      throw std::runtime_error("failed to create CGL context");
+    }
+  }
+
+  ~CglContext() override {
+    if (context_ != nullptr) {
+      if (locked_) {
+        CGLUnlockContext(context_);
+      }
+      CGLSetCurrentContext(nullptr);
+      CGLReleaseContext(context_);
+    }
+    if (pixel_format_ != nullptr) {
+      CGLReleasePixelFormat(pixel_format_);
+    }
+  }
+
+  void MakeCurrent() override {
+    CGLError err = CGLSetCurrentContext(context_);
+    if (err != kCGLNoError) {
+      throw std::runtime_error("failed to make CGL context current");
+    }
+    // Match mujoco.cgl.GLContext: software/offline CGL renderers rely on the
+    // context being locked while it is current.
+    if (!locked_) {
+      err = CGLLockContext(context_);
+      if (err != kCGLNoError) {
+        throw std::runtime_error("failed to lock CGL context");
+      }
+      locked_ = true;
+    }
+  }
+
+  void ClearCurrent() override {
+    if (locked_) {
+      CGLError err = CGLUnlockContext(context_);
+      if (err != kCGLNoError) {
+        throw std::runtime_error("failed to unlock CGL context");
+      }
+      locked_ = false;
+    }
+    CGLError err = CGLSetCurrentContext(nullptr);
+    if (err != kCGLNoError) {
+      throw std::runtime_error("failed to clear CGL context");
+    }
+  }
+
+ private:
+  template <std::size_t N>
+  bool ChoosePixelFormat(
+      const std::array<CGLPixelFormatAttribute, N>& attribs) {
+    GLint npix = 0;
+    CGLPixelFormatObj pixel_format = nullptr;
+    CGLError err = CGLChoosePixelFormat(attribs.data(), &pixel_format, &npix);
+    if (err != kCGLNoError || pixel_format == nullptr || npix == 0) {
+      if (pixel_format != nullptr) {
+        CGLReleasePixelFormat(pixel_format);
+      }
+      return false;
+    }
+    pixel_format_ = pixel_format;
+    return true;
+  }
+
+  CGLPixelFormatObj pixel_format_{nullptr};
+  CGLContextObj context_{nullptr};
+  bool locked_{false};
+};
+
+void PrimeCglContextForFirstReadback() {
+  // GitHub's macOS 14 CGL/Metal stack lazily finalizes renderer sample state.
+  // These no-op queries happen after MuJoCo creates the offscreen framebuffer
+  // and before the first render, making the first readback deterministic.
+  GLint value = 0;
+  glGetIntegerv(GL_MAX_SAMPLES, &value);
+  glGetIntegerv(GL_SAMPLE_BUFFERS, &value);
+  glGetIntegerv(GL_SAMPLES, &value);
+  (void)glGetString(GL_VENDOR);
+  (void)glGetString(GL_RENDERER);
+  (void)glGetString(GL_VERSION);
+}
+
+#elif defined(ENVPOOL_HAS_WGL)
+
+namespace {
+
+constexpr char kWindowClassName[] = "EnvPoolMuJoCoOffscreenWindow";
+
+void EnsureWindowClassRegistered() {
+  static std::once_flag registered;
+  std::call_once(registered, [] {
+    WNDCLASSA window_class = {};
+    window_class.style = CS_OWNDC;
+    window_class.lpfnWndProc = DefWindowProcA;
+    window_class.hInstance = GetModuleHandleA(nullptr);
+    window_class.lpszClassName = kWindowClassName;
+    if (RegisterClassA(&window_class) == 0 &&
+        GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+      throw std::runtime_error("failed to register WGL window class");
+    }
+  });
+}
+
+}  // namespace
+
+class WglContext final : public GlContext {
+ public:
+  WglContext() {
+    EnsureWindowClassRegistered();
+    window_ = CreateWindowExA(0, kWindowClassName, "EnvPoolMuJoCoOffscreen",
+                              WS_OVERLAPPEDWINDOW, 0, 0, 1, 1, nullptr, nullptr,
+                              GetModuleHandleA(nullptr), nullptr);
+    if (window_ == nullptr) {
+      throw std::runtime_error("failed to create WGL window");
+    }
+    device_context_ = GetDC(window_);
+    if (device_context_ == nullptr) {
+      DestroyWindow(window_);
+      window_ = nullptr;
+      throw std::runtime_error("failed to acquire WGL device context");
+    }
+
+    PIXELFORMATDESCRIPTOR pixel_format = {};
+    pixel_format.nSize = sizeof(pixel_format);
+    pixel_format.nVersion = 1;
+    pixel_format.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
+    pixel_format.iPixelType = PFD_TYPE_RGBA;
+    pixel_format.cColorBits = 24;
+    pixel_format.cAlphaBits = 8;
+    pixel_format.cDepthBits = 24;
+    pixel_format.cStencilBits = 8;
+    pixel_format.iLayerType = PFD_MAIN_PLANE;
+    int format_id = ChoosePixelFormat(device_context_, &pixel_format);
+    if (format_id == 0 ||
+        SetPixelFormat(device_context_, format_id, &pixel_format) == FALSE) {
+      ReleaseDC(window_, device_context_);
+      device_context_ = nullptr;
+      DestroyWindow(window_);
+      window_ = nullptr;
+      throw std::runtime_error("failed to configure WGL pixel format");
+    }
+
+    context_ = wglCreateContext(device_context_);
+    if (context_ == nullptr) {
+      ReleaseDC(window_, device_context_);
+      device_context_ = nullptr;
+      DestroyWindow(window_);
+      window_ = nullptr;
+      throw std::runtime_error("failed to create WGL context");
+    }
+  }
+
+  ~WglContext() override {
+    if (context_ != nullptr) {
+      wglMakeCurrent(nullptr, nullptr);
+      wglDeleteContext(context_);
+    }
+    if (window_ != nullptr && device_context_ != nullptr) {
+      ReleaseDC(window_, device_context_);
+    }
+    if (window_ != nullptr) {
+      DestroyWindow(window_);
+    }
+  }
+
+  void MakeCurrent() override {
+    if (wglMakeCurrent(device_context_, context_) == FALSE) {
+      throw std::runtime_error("failed to make WGL context current");
+    }
+  }
+
+  void ClearCurrent() override {
+    if (wglMakeCurrent(nullptr, nullptr) == FALSE) {
+      throw std::runtime_error("failed to clear WGL context");
+    }
+  }
+
+ private:
+  HWND window_{nullptr};
+  HDC device_context_{nullptr};
+  HGLRC context_{nullptr};
+};
+
+class BorrowedWglContext final : public GlContext {
+ public:
+  BorrowedWglContext()
+      : device_context_(wglGetCurrentDC()), context_(wglGetCurrentContext()) {
+    if (device_context_ == nullptr || context_ == nullptr) {
+      throw std::runtime_error("failed to capture current WGL context");
+    }
+  }
+
+  void MakeCurrent() override {
+    if (wglMakeCurrent(device_context_, context_) == FALSE) {
+      throw std::runtime_error("failed to make borrowed WGL context current");
+    }
+  }
+
+  void ClearCurrent() override {
+    if (wglMakeCurrent(nullptr, nullptr) == FALSE) {
+      throw std::runtime_error("failed to clear borrowed WGL context");
+    }
+  }
+
+ private:
+  HDC device_context_{nullptr};
+  HGLRC context_{nullptr};
+};
+
+#elif defined(ENVPOOL_HAS_EGL)
+
+class EglContext final : public GlContext {
+ public:
+  EglContext() {
+    // Wheel repair renames libEGL; expose its entry point to MuJoCo's loader.
+    static const void* egl_library = [] {
+      Dl_info library{};
+      if (!dladdr(reinterpret_cast<void*>(eglGetProcAddress), &library)) {
+        throw std::runtime_error("failed to locate the loaded EGL library");
+      }
+      void* handle = dlopen(library.dli_fname, RTLD_NOW | RTLD_GLOBAL);
+      if (!handle)
+        throw std::runtime_error("failed to expose the EGL entry point");
+      return handle;
+    }();
+    (void)egl_library;
+    const std::array<EGLint, 19> config_attribs = {
+        EGL_RED_SIZE,
+        8,
+        EGL_GREEN_SIZE,
+        8,
+        EGL_BLUE_SIZE,
+        8,
+        EGL_ALPHA_SIZE,
+        8,
+        EGL_DEPTH_SIZE,
+        24,
+        EGL_STENCIL_SIZE,
+        8,
+        EGL_COLOR_BUFFER_TYPE,
+        EGL_RGB_BUFFER,
+        EGL_SURFACE_TYPE,
+        EGL_PBUFFER_BIT,
+        EGL_RENDERABLE_TYPE,
+        EGL_OPENGL_BIT,
+        EGL_NONE,
+    };
+    const std::array<EGLint, 5> pbuffer_attribs = {
+        EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE,
+    };
+
+    display_ = AcquireDisplay();
+    if (display_ == nullptr) {
+      throw std::runtime_error("failed to initialize EGL");
+    }
+    eglReleaseThread();
+    EGLDisplay display = display_->Get();
+    EGLConfig config = nullptr;
+    EGLint num_configs = 0;
+    if (eglChooseConfig(display, config_attribs.data(), &config, 1,
+                        &num_configs) != EGL_TRUE ||
+        num_configs < 1) {
+      display_.reset();
+      throw std::runtime_error("failed to choose EGL config");
+    }
+    if (eglBindAPI(EGL_OPENGL_API) != EGL_TRUE) {
+      display_.reset();
+      throw std::runtime_error("failed to bind EGL OpenGL API");
+    }
+    if (!HasExtension(display, "EGL_KHR_surfaceless_context")) {
+      surface_ =
+          eglCreatePbufferSurface(display, config, pbuffer_attribs.data());
+      if (surface_ == EGL_NO_SURFACE) {
+        display_.reset();
+        throw std::runtime_error("failed to create EGL pbuffer surface");
+      }
+    }
+    context_ = eglCreateContext(display, config, EGL_NO_CONTEXT, nullptr);
+    if (context_ == EGL_NO_CONTEXT) {
+      if (surface_ != EGL_NO_SURFACE) {
+        eglDestroySurface(display, surface_);
+        surface_ = EGL_NO_SURFACE;
+      }
+      display_.reset();
+      throw std::runtime_error("failed to create EGL context");
+    }
+  }
+
+  ~EglContext() override {
+    if (display_ != nullptr) {
+      EGLDisplay display = display_->Get();
+      eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+      if (context_ != EGL_NO_CONTEXT) {
+        eglDestroyContext(display, context_);
+      }
+      if (surface_ != EGL_NO_SURFACE) {
+        eglDestroySurface(display, surface_);
+      }
+      eglReleaseThread();
+    }
+  }
+
+  void MakeCurrent() override {
+    if (eglMakeCurrent(display_->Get(), surface_, surface_, context_) !=
+        EGL_TRUE) {
+      throw std::runtime_error("failed to make EGL context current");
+    }
+  }
+
+  void ClearCurrent() override {
+    if (eglMakeCurrent(display_->Get(), EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT) != EGL_TRUE) {
+      throw std::runtime_error("failed to clear EGL context");
+    }
+    eglReleaseThread();
+  }
+
+ private:
+  class DisplayHandle {
+   public:
+    explicit DisplayHandle(EGLDisplay display) : display_(display) {}
+
+    ~DisplayHandle() {
+      // EGLDisplay handles are process-wide. Python MuJoCo/Gymnasium renderers
+      // cache the same display in module globals, so terminating it when the
+      // last EnvPool renderer closes can invalidate later upstream renders in
+      // the same process. Contexts and surfaces remain renderer-owned and are
+      // destroyed normally; keep the display alive until process teardown.
+      eglReleaseThread();
+    }
+
+    EGLDisplay Get() const { return display_; }
+
+   private:
+    EGLDisplay display_{EGL_NO_DISPLAY};
+  };
+
+  static bool HasExtension(EGLDisplay display, const char* extension) {
+    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+    if (extensions == nullptr) {
+      return false;
+    }
+    const std::string_view list(extensions);
+    const std::string_view needle(extension);
+    std::size_t pos = 0;
+    while ((pos = list.find(needle, pos)) != std::string_view::npos) {
+      const bool begins_token = pos == 0 || list[pos - 1] == ' ';
+      const std::size_t end = pos + needle.size();
+      const bool ends_token = end == list.size() || list[end] == ' ';
+      if (begins_token && ends_token) {
+        return true;
+      }
+      pos = end;
+    }
+    return false;
+  }
+
+  static EGLDisplay TryInitializeDisplay(EGLDisplay display) {
+    if (display == EGL_NO_DISPLAY) {
+      return EGL_NO_DISPLAY;
+    }
+    EGLint major = 0;
+    EGLint minor = 0;
+    if (eglInitialize(display, &major, &minor) == EGL_TRUE) {
+      return display;
+    }
+    return EGL_NO_DISPLAY;
+  }
+
+#if defined(ENVPOOL_HAS_EGL_DEVICE_EXT)
+  static int ParseSelectedDevice() {
+    const char* selected_device = std::getenv("MUJOCO_EGL_DEVICE_ID");
+    if (selected_device == nullptr) {
+      return -1;
+    }
+    char* end = nullptr;
+    errno = 0;
+    int64_t device_idx = std::strtoll(selected_device, &end, 10);
+    if (errno != 0 || end == selected_device || *end != '\0' ||
+        device_idx < 0 || device_idx > std::numeric_limits<int>::max()) {
+      throw std::runtime_error(
+          "MUJOCO_EGL_DEVICE_ID must be a non-negative integer");
+    }
+    return static_cast<int>(device_idx);
+  }
+
+  static EGLDisplay TryInitializeDeviceDisplay() {
+    auto* query_devices = reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(
+        eglGetProcAddress("eglQueryDevicesEXT"));
+    auto* get_platform_display =
+        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+            eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (query_devices == nullptr || get_platform_display == nullptr) {
+      return EGL_NO_DISPLAY;
+    }
+    constexpr EGLint k_max_devices = 16;
+    std::array<EGLDeviceEXT, k_max_devices> devices = {};
+    EGLint num_devices = 0;
+    const EGLBoolean query_ok =
+        query_devices(k_max_devices, devices.data(), &num_devices);
+    if (query_ok != EGL_TRUE || num_devices < 1) {
+      return EGL_NO_DISPLAY;
+    }
+
+    int begin = 0;
+    int end = num_devices;
+    int selected_device = ParseSelectedDevice();
+    if (selected_device >= 0) {
+      if (selected_device >= num_devices) {
+        throw std::runtime_error("MUJOCO_EGL_DEVICE_ID is out of range");
+      }
+      begin = selected_device;
+      end = selected_device + 1;
+    }
+
+    for (int device_idx = begin; device_idx < end; ++device_idx) {
+      EGLDisplay display = get_platform_display(EGL_PLATFORM_DEVICE_EXT,
+                                                devices[device_idx], nullptr);
+      if (display == EGL_NO_DISPLAY || eglGetError() != EGL_SUCCESS) {
+        continue;
+      }
+      display = TryInitializeDisplay(display);
+      if (display != EGL_NO_DISPLAY && eglGetError() == EGL_SUCCESS) {
+        return display;
+      }
+    }
+    return EGL_NO_DISPLAY;
+  }
+#endif
+
+  static EGLDisplay CreateRawDisplay() {
+#if defined(ENVPOOL_HAS_EGL_DEVICE_EXT)
+    EGLDisplay display = TryInitializeDeviceDisplay();
+    if (display != EGL_NO_DISPLAY) {
+      return display;
+    }
+#endif
+    return TryInitializeDisplay(eglGetDisplay(EGL_DEFAULT_DISPLAY));
+  }
+
+  static std::shared_ptr<DisplayHandle> AcquireDisplay() {
+    static std::mutex mutex;
+    static std::shared_ptr<DisplayHandle> display;
+
+    std::lock_guard<std::mutex> lock(mutex);
+    if (display != nullptr) {
+      return display;
+    }
+    EGLDisplay raw_display = CreateRawDisplay();
+    if (raw_display == EGL_NO_DISPLAY) {
+      return nullptr;
+    }
+    display = std::make_shared<DisplayHandle>(raw_display);
+    return display;
+  }
+
+  std::shared_ptr<DisplayHandle> display_;
+  EGLContext context_{EGL_NO_CONTEXT};
+  EGLSurface surface_{EGL_NO_SURFACE};
+};
+
+#endif
+
+std::shared_ptr<GlContext> CreateGlContext(bool share_cgl_context,
+                                           bool prefer_offline_cgl_context) {
+#if defined(ENVPOOL_HAS_CGL)
+  if (share_cgl_context) {
+    if (prefer_offline_cgl_context) {
+      thread_local std::shared_ptr<GlContext> offline_context =
+          std::make_shared<CglContext>(true);
+      return offline_context;
+    }
+    thread_local std::shared_ptr<GlContext> preferred_context =
+        std::make_shared<CglContext>(false);
+    return preferred_context;
+  }
+  // Match Gymnasium's CGL lifecycle: create a context per renderer/viewer.
+  // Reusing one CGL context across different MuJoCo models can leave renderer
+  // state behind on macOS software/offline renderers.
+  return std::make_shared<CglContext>(prefer_offline_cgl_context);
+#elif defined(ENVPOOL_HAS_WGL)
+  (void)share_cgl_context;
+  (void)prefer_offline_cgl_context;
+  if (wglGetCurrentContext() != nullptr && wglGetCurrentDC() != nullptr) {
+    // Borrowed WGL handles become invalid if another library later calls
+    // `glfw.terminate()`, so do not cache them across renderer instances.
+    return std::make_shared<BorrowedWglContext>();
+  }
+  thread_local std::shared_ptr<GlContext> context =
+      std::make_shared<WglContext>();
+  return context;
+#elif defined(ENVPOOL_HAS_EGL)
+  (void)share_cgl_context;
+  (void)prefer_offline_cgl_context;
+  // EnvPool worker threads can process a different environment on a later
+  // reset/step. If multiple renderers created on one worker share a thread
+  // local EGLContext, those renderers can later try to make the same context
+  // current concurrently on different workers. Keep the EGLDisplay shared, but
+  // give each renderer its own EGLContext.
+  return std::make_shared<EglContext>();
+#else
+  (void)share_cgl_context;
+  (void)prefer_offline_cgl_context;
+  throw std::runtime_error(
+      "MuJoCo rendering is unsupported on this platform/build");
+#endif
+}
+
+OffscreenRenderer::OffscreenRenderer(CameraPolicy camera_policy,
+                                     bool disable_auxiliary_visuals,
+                                     bool share_cgl_context,
+                                     bool prefer_offline_cgl_context,
+                                     bool resize_offscreen)
+    : camera_policy_(camera_policy),
+      share_cgl_context_(share_cgl_context),
+      prefer_offline_cgl_context_(prefer_offline_cgl_context),
+      resize_offscreen_(resize_offscreen) {
+  mjv_defaultScene(&scene_);
+  mjv_defaultCamera(&camera_);
+  mjv_defaultOption(&option_);
+  mjv_defaultPerturb(&perturb_);
+  mjr_defaultContext(&context_);
+  if (camera_policy_ == CameraPolicy::kDmControl) {
+    // Match dm_control's MjvOption default, which hides rangefinder beams.
+    option_.flags[mjVIS_RANGEFINDER] = 0;
+  }
+  if (disable_auxiliary_visuals) {
+    option_.flags[mjVIS_TENDON] = 0;
+    option_.flags[mjVIS_ACTUATOR] = 0;
+    option_.flags[mjVIS_ACTIVATION] = 0;
+  }
+  camera_.fixedcamid = -1;
+}
+
+OffscreenRenderer::~OffscreenRenderer() {
+  if (!initialized_) {
+    return;
+  }
+  bool made_current = false;
+  try {
+    gl_context_->MakeCurrent();
+    made_current = true;
+  } catch (const std::exception& error) {
+    static_cast<void>(error);
+    // Destructors must not throw during Python/interpreter shutdown. If the GL
+    // context is already unavailable, free CPU-side scene state and let process
+    // teardown reclaim the backend resources.
+  }
+  if (made_current) {
+    mjr_freeContext(&context_);
+  }
+  mjv_freeScene(&scene_);
+  if (made_current) {
+    try {
+      gl_context_->ClearCurrent();
+    } catch (const std::exception& error) {
+      static_cast<void>(error);
+      // Preserve no-throw destructor semantics.
+    }
+  }
+}
+
+void OffscreenRenderer::Initialize(const mjModel* model) {
+  gl_context_ =
+      CreateGlContext(share_cgl_context_, prefer_offline_cgl_context_);
+  gl_context_->MakeCurrent();
+  mjv_makeScene(model, &scene_, 10000);
+  mjr_makeContext(model, &context_, mjFONTSCALE_150);
+  mjr_setBuffer(mjFB_OFFSCREEN, &context_);
+  context_.readDepthMap = mjDEPTH_ZEROFAR;
+  initialized_ = true;
+#if defined(ENVPOOL_HAS_CGL)
+  PrimeCglContextForFirstReadback();
+#endif
+}
+
+void OffscreenRenderer::UploadHeightField(const mjModel* model, int hfield_id) {
+  if (hfield_id < 0 || hfield_id >= model->nhfield) {
+    throw std::out_of_range("hfield_id is out of range");
+  }
+  if (!initialized_) {
+    return;
+  }
+  gl_context_->MakeCurrent();
+  mjr_uploadHField(model, &context_, hfield_id);
+  gl_context_->ClearCurrent();
+}
+
+void OffscreenRenderer::UpdateCamera(const mjModel* model, const mjData* data,
+                                     int camera_id,
+                                     const mjvCamera* camera_override) {
+  if (camera_id < -1 || camera_id >= model->ncam) {
+    throw std::out_of_range("camera_id is out of range");
+  }
+  if (camera_id == -1 && camera_override != nullptr) {
+    camera_ = *camera_override;
+    return;
+  }
+  if (camera_id == -1 && camera_policy_ == CameraPolicy::kGymLike) {
+    int track_camera_id = mj_name2id(model, mjOBJ_CAMERA, "track");
+    if (track_camera_id >= 0) {
+      camera_.type = mjCAMERA_FIXED;
+      camera_.fixedcamid = track_camera_id;
+      return;
+    }
+    camera_.type = mjCAMERA_FREE;
+    camera_.fixedcamid = -1;
+    if (!free_camera_initialized_ && model->ngeom > 0) {
+      for (int axis = 0; axis < 3; ++axis) {
+        camera_.lookat[axis] = MedianGeomPosition(data, model->ngeom, axis);
+      }
+      camera_.distance = model->stat.extent;
+      free_camera_initialized_ = true;
+    }
+  } else if (camera_id == -1) {
+    camera_.type = mjCAMERA_FREE;
+    camera_.fixedcamid = -1;
+    if (!free_camera_initialized_) {
+      mjv_defaultFreeCamera(model, &camera_);
+      free_camera_initialized_ = true;
+    }
+  } else {
+    camera_.type = mjCAMERA_FIXED;
+    camera_.fixedcamid = camera_id;
+  }
+}
+
+void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
+                               int height, int camera_id, unsigned char* rgb,
+                               const mjvCamera* camera_override,
+                               const mjvOption* option_override,
+                               const mjvGeom* extra_geoms,
+                               int extra_geom_count) {
+  if (!initialized_) {
+    Initialize(model);
+  }
+  gl_context_->MakeCurrent();
+  if (resize_offscreen_ &&
+      (context_.offWidth != width || context_.offHeight != height)) {
+    mjr_resizeOffscreen(width, height, &context_);
+  }
+  mjr_setBuffer(mjFB_OFFSCREEN, &context_);
+  UpdateCamera(model, data, camera_id, camera_override);
+
+  mjrRect viewport = {0, 0, width, height};
+  auto render_scene = [&] {
+    mjv_updateScene(model, data,
+                    option_override != nullptr ? option_override : &option_,
+                    &perturb_, &camera_, mjCAT_ALL, &scene_);
+    if (scene_.ngeom + extra_geom_count > scene_.maxgeom) {
+      throw std::runtime_error("Extra render geometry exceeds scene capacity");
+    }
+    for (int i = 0; i < extra_geom_count; ++i)
+      scene_.geoms[scene_.ngeom++] = extra_geoms[i];
+    mjr_render(viewport, &scene_, &context_);
+  };
+
+  std::size_t frame_bytes =
+      static_cast<std::size_t>(width) * height * 3 * sizeof(unsigned char);
+  if (scratch_.size() != frame_bytes) {
+    scratch_.resize(frame_bytes);
+  }
+
+  auto read_pixels = [&] {
+#if defined(ENVPOOL_HAS_CGL)
+    mjr_finish();
+#endif
+    mjr_readPixels(scratch_.data(), nullptr, viewport, &context_);
+  };
+
+  render_scene();
+#if defined(ENVPOOL_HAS_CGL)
+  // macOS CGL can expose an unsettled first offscreen frame. Settle once per
+  // renderer so env code does not need task-specific render workarounds.
+  if (!cgl_first_frame_settled_) {
+    read_pixels();
+    for (int pass = 0; pass < kCglFirstFrameSettlePasses; ++pass) {
+      render_scene();
+      read_pixels();
+    }
+    cgl_first_frame_settled_ = true;
+  } else {
+    read_pixels();
+  }
+#else
+  read_pixels();
+#endif
+
+  std::size_t row_bytes =
+      static_cast<std::size_t>(width) * 3 * sizeof(unsigned char);
+  for (int y = 0; y < height; ++y) {
+    const auto* src =
+        scratch_.data() + static_cast<std::size_t>(height - 1 - y) * row_bytes;
+    std::memcpy(rgb + static_cast<std::size_t>(y) * row_bytes, src, row_bytes);
+  }
+  gl_context_->ClearCurrent();
+}
+
+}  // namespace envpool::mujoco

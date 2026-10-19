@@ -1,0 +1,22 @@
+HumanoidBench native task implementation
+
+Task formulas and state machines are translated from HumanoidBench 0.2.1:
+https://github.com/wzhhasadream/humanoid-bench-compatible
+Revision: d198f7b49cf889d86e41fdcba6b174e6b235fd12
+Original project: https://github.com/carlosferrazza/humanoid-bench
+
+Copyright (c) 2024 Robot Learning Lab (RLL) lab @ UC Berkeley.
+The task implementation is distributed under the original MIT license.
+The EnvPool integration is distributed under Apache-2.0.
+
+Assets retain their individual LICENSE files, including the H1/G1,
+Shadow Hand, Robotiq and kitchen model licenses. The build copies assets
+from the pinned Python package without importing its runtime task logic.
+The kitchen kettle defaults are nested under an unnamed default to meet
+the current MuJoCo XML schema; their numerical values are unchanged.
+
+The local Linux wheel bundles the official MuJoCo 3.6.0 engine and its
+OBJ, STL, and touch-grid plugins, preserving their license notices.
+Using the same official physics binary avoids compiler-dependent drift
+in contact-rich trajectory comparisons. No Python task implementation
+is imported or called while running the native environments.

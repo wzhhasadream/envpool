@@ -14,18 +14,36 @@
 
 """EnvPool pip requirements initialization, this is loaded in WORKSPACE."""
 
-load("@rules_python//python:pip.bzl", "pip_install")
+load("@python_versions//:pip.bzl", "multi_pip_parse")
+load("//third_party/ale:oracle_workspace.bzl", "ale_oracle_pip_workspace")
+load("//third_party/jumanji:oracle_workspace.bzl", "jumanji_oracle_pip_workspace")
+load("//third_party/myosuite:oracle_workspace.bzl", "myosuite_oracle_pip_workspace")
 
 def workspace():
     """Configure pip requirements."""
 
     if "pip_requirements" not in native.existing_rules().keys():
-        pip_install(
+        multi_pip_parse(
             name = "pip_requirements",
-            python_interpreter = "python3",
+            default_version = "3.12",
+            python_interpreter_target = {
+                "3.11": "@python_versions_3_11_host//:python",
+                "3.12": "@python_versions_3_12_host//:python",
+                "3.13": "@python_versions_3_13_host//:python",
+                "3.14": "@python_versions_3_14_host//:python",
+            },
+            requirements_lock = {
+                "3.11": "@envpool//third_party/pip_requirements:requirements.txt",
+                "3.12": "@envpool//third_party/pip_requirements:requirements.txt",
+                "3.13": "@envpool//third_party/pip_requirements:requirements.txt",
+                "3.14": "@envpool//third_party/pip_requirements:requirements.txt",
+            },
             # default timeout value is 600, change it if you failed.
             # timeout = 3600,
             quiet = False,
-            requirements = "@envpool//third_party/pip_requirements:requirements.txt",
             # extra_pip_args = ["--extra-index-url", "https://mirrors.aliyun.com/pypi/simple"],
         )
+
+    ale_oracle_pip_workspace()
+    jumanji_oracle_pip_workspace()
+    myosuite_oracle_pip_workspace()

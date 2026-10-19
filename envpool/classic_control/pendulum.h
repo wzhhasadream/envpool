@@ -20,7 +20,9 @@
 
 #include <cmath>
 #include <random>
+#include <utility>
 
+#include "envpool/classic_control/render_utils.h"
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
 
@@ -42,7 +44,7 @@ class PendulumEnvFns {
 
 using PendulumEnvSpec = EnvSpec<PendulumEnvFns>;
 
-class PendulumEnv : public Env<PendulumEnvSpec> {
+class PendulumEnv : public Env<PendulumEnvSpec>, public RenderableEnv {
  protected:
   const double kMaxSpeed = 8;
   const double kMaxTorque = 2;
@@ -52,6 +54,8 @@ class PendulumEnv : public Env<PendulumEnvSpec> {
   int max_episode_steps_, elapsed_step_;
   int version_;
   double theta_, theta_dot_;
+  bool has_last_u_{false};
+  double last_u_{0.0};
   std::uniform_real_distribution<> dist_, dist_dot_;
   bool done_{true};
 
@@ -66,9 +70,15 @@ class PendulumEnv : public Env<PendulumEnvSpec> {
 
   bool IsDone() override { return done_; }
 
+  std::pair<int, int> RenderSize(int width, int height) const override {
+    return {width > 0 ? width : 500, height > 0 ? height : 500};
+  }
+
   void Reset() override {
     theta_ = dist_(gen_);
     theta_dot_ = dist_dot_(gen_);
+    has_last_u_ = false;
+    last_u_ = 0.0;
     done_ = false;
     elapsed_step_ = 0;
     WriteState(0.0);
@@ -77,9 +87,14 @@ class PendulumEnv : public Env<PendulumEnvSpec> {
   void Step(const Action& action) override {
     done_ = (++elapsed_step_ >= max_episode_steps_);
     float act = action["action"_];
-    double u = act < -kMaxTorque  ? -kMaxTorque
-               : act > kMaxTorque ? kMaxTorque
-                                  : act;
+    double u = act;
+    if (act < -kMaxTorque) {
+      u = -kMaxTorque;
+    } else if (act > kMaxTorque) {
+      u = kMaxTorque;
+    }
+    last_u_ = u;
+    has_last_u_ = true;
     double cost =
         theta_ * theta_ + 0.1 * theta_dot_ * theta_dot_ + 0.001 * u * u;
     double new_theta_dot =
@@ -87,9 +102,12 @@ class PendulumEnv : public Env<PendulumEnvSpec> {
     if (version_ == 0) {
       theta_ += new_theta_dot * kDt;
     }
-    theta_dot_ = new_theta_dot < -kMaxSpeed  ? -kMaxSpeed
-                 : new_theta_dot > kMaxSpeed ? kMaxSpeed
-                                             : new_theta_dot;
+    theta_dot_ = new_theta_dot;
+    if (new_theta_dot < -kMaxSpeed) {
+      theta_dot_ = -kMaxSpeed;
+    } else if (new_theta_dot > kMaxSpeed) {
+      theta_dot_ = kMaxSpeed;
+    }
     if (version_ == 1) {
       theta_ += new_theta_dot * kDt;
     }
@@ -102,9 +120,14 @@ class PendulumEnv : public Env<PendulumEnvSpec> {
     WriteState(static_cast<float>(-cost));
   }
 
+  void Render(int width, int height, int /*camera_id*/,
+              unsigned char* rgb) override {
+    rendering::RenderPendulum(theta_, has_last_u_, last_u_, width, height, rgb);
+  }
+
  private:
   void WriteState(float reward) {
-    State state = Allocate();
+    auto state = Allocate();
     state["obs"_][0] = static_cast<float>(std::cos(theta_));
     state["obs"_][1] = static_cast<float>(std::sin(theta_));
     state["obs"_][2] = static_cast<float>(theta_dot_);

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -27,19 +28,25 @@ cc_library(
 )
 
 cc_library(
+    name = "logging",
+    deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
     name = "spec",
     hdrs = ["spec.h"],
-    deps = [
-        "@com_github_google_glog//:glog",
-    ],
+    deps = [":logging"],
 )
 
 cc_library(
     name = "array",
     hdrs = ["array.h"],
     deps = [
+        ":logging",
         ":spec",
-        "@com_github_google_glog//:glog",
     ],
 )
 
@@ -48,10 +55,10 @@ cc_library(
     hdrs = ["dict.h"],
     deps = [
         ":array",
+        ":logging",
         ":spec",
         ":tuple_utils",
         ":type_utils",
-        "@com_github_google_glog//:glog",
     ],
 )
 
@@ -60,6 +67,7 @@ cc_test(
     srcs = ["dict_test.cc"],
     deps = [
         ":dict",
+        ":logging",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -81,6 +89,7 @@ cc_test(
         "state_buffer_test.cc",
     ],
     deps = [
+        ":logging",
         ":state_buffer",
         "@com_google_googletest//:gtest_main",
     ],
@@ -99,7 +108,7 @@ cc_test(
     srcs = ["circular_buffer_test.cc"],
     deps = [
         ":circular_buffer",
-        "@com_github_google_glog//:glog",
+        ":logging",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -118,6 +127,7 @@ cc_test(
     name = "state_buffer_queue_test",
     srcs = ["state_buffer_queue_test.cc"],
     deps = [
+        ":logging",
         ":state_buffer_queue",
         "@com_google_googletest//:gtest_main",
         "@threadpool",
@@ -139,6 +149,7 @@ cc_test(
     deps = [
         ":action_buffer_queue",
         ":dict",
+        ":logging",
         ":spec",
         "@com_google_googletest//:gtest_main",
         "@threadpool",
@@ -158,6 +169,7 @@ cc_library(
     name = "env",
     hdrs = ["env.h"],
     deps = [
+        ":env_spec",
         ":spec",
         ":state_buffer_queue",
     ],
@@ -186,14 +198,26 @@ cc_library(
 )
 
 cc_library(
+    name = "cuda_driver",
+    hdrs = ["cuda_driver.h"],
+    deps = [":logging"],
+)
+
+cc_library(
     name = "xla_template",
     hdrs = ["xla_template.h"],
-    linkopts = [
-        "-ldl",
-        "-lrt",
-    ],
+    linkopts = select({
+        "//:linux": [
+            "-ldl",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
-        "@cuda//:cudart_static",
+        ":cuda_driver",
+        ":spec",
+        "@openxla_ffi_headers//:headers",
+        "@pybind11",
     ],
 )
 
@@ -202,8 +226,9 @@ cc_library(
     hdrs = ["xla.h"],
     deps = [
         ":array",
+        ":cuda_driver",
+        ":dict",
         ":xla_template",
-        "@cuda//:cudart_static",
     ],
 )
 

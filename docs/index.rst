@@ -47,7 +47,7 @@ Installation
 ------------
 
 EnvPool is currently hosted on `PyPI <https://pypi.org/project/envpool/>`_.
-It requires Python >= 3.7.
+It supports Python 3.11-3.14.
 
 You can install EnvPool with the following command:
 
@@ -76,6 +76,8 @@ stable version through `envpool.readthedocs.io/en/stable/
    content/slides
    content/build
    content/python_interface
+   content/gymnasium_wrappers
+   content/cpp_interface
    content/xla_interface
    content/benchmark
    content/new_env
@@ -90,11 +92,22 @@ stable version through `envpool.readthedocs.io/en/stable/
    env/box2d
    env/classic_control
    env/dm_control
+   env/mujoco_action_repeat
+   env/multitask
+   env/gfootball
+   env/highway
+   env/humanoid_bench
+   env/jumanji
    env/minigrid
+   env/gymnasium_robotics
+   env/metaworld
    env/mujoco_gym
+   env/myosuite
+   env/pgx
    env/procgen
    env/toy_text
    env/vizdoom
+   env/mujoco_playground
 
 
 Indices and tables

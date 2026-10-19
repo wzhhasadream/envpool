@@ -1,0 +1,86 @@
+/*
+ * Copyright 2026 Garena Online Private Limited
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef ENVPOOL_MUJOCO_OFFSCREEN_RENDERER_H_
+#define ENVPOOL_MUJOCO_OFFSCREEN_RENDERER_H_
+
+#include <mujoco.h>
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace envpool::mujoco {
+
+enum class CameraPolicy : std::uint8_t {
+  kGymLike,
+  kDmControl,
+};
+
+class GlContext {
+ public:
+  virtual ~GlContext() = default;
+
+  virtual void MakeCurrent() = 0;
+  virtual void ClearCurrent() = 0;
+};
+
+std::shared_ptr<GlContext> CreateGlContext(
+    bool share_cgl_context = false, bool prefer_offline_cgl_context = false);
+
+class OffscreenRenderer {
+ public:
+  explicit OffscreenRenderer(
+      CameraPolicy camera_policy = CameraPolicy::kGymLike,
+      bool disable_auxiliary_visuals = false, bool share_cgl_context = false,
+      bool prefer_offline_cgl_context = false, bool resize_offscreen = true);
+  ~OffscreenRenderer();
+
+  // Refresh a modified heightfield if this renderer has a context already.
+  void UploadHeightField(const mjModel* model, int hfield_id);
+
+  void Render(const mjModel* model, mjData* data, int width, int height,
+              int camera_id, unsigned char* rgb,
+              const mjvCamera* camera_override = nullptr,
+              const mjvOption* option_override = nullptr,
+              const mjvGeom* extra_geoms = nullptr, int extra_geom_count = 0);
+
+ private:
+  void Initialize(const mjModel* model);
+  void UpdateCamera(const mjModel* model, const mjData* data, int camera_id,
+                    const mjvCamera* camera_override);
+
+  std::shared_ptr<GlContext> gl_context_;
+  mjvScene scene_;
+  mjvCamera camera_;
+  mjvOption option_;
+  mjvPerturb perturb_;
+  mjrContext context_;
+  std::vector<unsigned char> scratch_;
+  CameraPolicy camera_policy_;
+  bool share_cgl_context_;
+  bool prefer_offline_cgl_context_;
+  bool resize_offscreen_;
+  bool initialized_{false};
+  bool free_camera_initialized_{false};
+#if defined(__APPLE__)
+  bool cgl_first_frame_settled_{false};
+#endif
+};
+
+}  // namespace envpool::mujoco
+
+#endif  // ENVPOOL_MUJOCO_OFFSCREEN_RENDERER_H_

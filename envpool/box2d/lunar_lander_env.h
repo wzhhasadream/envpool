@@ -18,25 +18,34 @@
 #ifndef ENVPOOL_BOX2D_LUNAR_LANDER_ENV_H_
 #define ENVPOOL_BOX2D_LUNAR_LANDER_ENV_H_
 
-#include <box2d/box2d.h>
+#include <Box2D/Box2D.h>
 
 #include <array>
 #include <memory>
 #include <random>
+#include <utility>
 #include <vector>
+
+#include "envpool/core/env.h"
 
 namespace box2d {
 
 class LunarLanderContactDetector;
 
-class LunarLanderBox2dEnv {
+class LunarLanderBox2dEnv : public RenderableEnv {
   const double kFPS = 50;
   const double kScale = 30.0;
   const double kMainEnginePower = 13.0;
   const double kSideEnginePower = 0.6;
   const double kInitialRandom = 1000.0;
-  const double kLanderPoly[6][2] = {  // NOLINT
-      {-14, 17}, {-17, 0}, {-17, -10}, {17, -10}, {17, 0}, {14, 17}};
+  const std::array<std::array<double, 2>, 6> kLanderPoly = {{
+      {-14, 17},
+      {-17, 0},
+      {-17, -10},
+      {17, -10},
+      {17, 0},
+      {14, 17},
+  }};
   const double kLegAway = 20;
   const double kLegDown = 18;
   const double kLegW = 2;
@@ -52,9 +61,11 @@ class LunarLanderBox2dEnv {
 
  protected:
   int max_episode_steps_, elapsed_step_;
-  float reward_, prev_shaping_;
+  double reward_, prev_shaping_;
   bool continuous_, done_{true};
   std::array<float, 8> obs_;
+  std::array<float, 2> last_dispersion_{0.0f, 0.0f};
+  std::array<float, 2> initial_force_{0.0f, 0.0f};
 
   // box2d related
   std::unique_ptr<b2World> world_;
@@ -64,6 +75,12 @@ class LunarLanderBox2dEnv {
   std::array<b2Body*, 2> legs_;
   std::array<float, 2> ground_contact_;
   std::unique_ptr<LunarLanderContactDetector> listener_;
+  double helipad_x1_{0};
+  double helipad_x2_{0};
+  double helipad_y_{0};
+  std::vector<std::array<b2Vec2, 4>> sky_polys_;
+  [[nodiscard]] std::array<float, 7> BodyState(const b2Body* body) const;
+  [[nodiscard]] std::vector<float> SkyPolyState() const;
 
  public:
   LunarLanderBox2dEnv(bool continuous, int max_episode_steps);
@@ -72,6 +89,9 @@ class LunarLanderBox2dEnv {
   // continuous action space: action0 and action1
   void LunarLanderStep(std::mt19937* gen, int action, float action0,
                        float action1);
+  std::pair<int, int> RenderSize(int width, int height) const override;
+  void Render(int width, int height, int camera_id,
+              unsigned char* rgb) override;
 
  private:
   void ResetBox2d(std::mt19937* gen);

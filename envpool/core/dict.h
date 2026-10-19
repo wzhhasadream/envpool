@@ -17,16 +17,18 @@
 #ifndef ENVPOOL_CORE_DICT_H_
 #define ENVPOOL_CORE_DICT_H_
 
-#include <glog/logging.h>
-
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "envpool/core/array.h"
 #include "envpool/core/spec.h"
 #include "envpool/core/tuple_utils.h"
@@ -41,23 +43,58 @@ class Value {
   Type v;
 };
 
+#ifdef _MSC_VER
+template <std::size_t N>
+struct FixedKeyString {
+  char value[N];
+
+  constexpr FixedKeyString(const char (&str)[N])  // NOLINT(runtime/explicit)
+      : value{} {
+    for (std::size_t i = 0; i < N; ++i) {
+      value[i] = str[i];
+    }
+  }
+};
+
+template <std::size_t N>
+FixedKeyString(const char (&)[N]) -> FixedKeyString<N>;
+
+template <FixedKeyString S>
+class Key {
+ public:
+  static constexpr auto kStr = S;
+  static constexpr std::string_view kStrView{kStr.value,
+                                             sizeof(kStr.value) - 1};
+  template <typename Type>
+  static constexpr auto Bind(Type&& v) {
+    return Value<Key, Type>(std::forward<Type>(v));
+  }
+  static std::string Str() { return {kStrView.data(), kStrView.size()}; }
+};
+
+template <FixedKeyString S>
+inline constexpr auto operator""_() {  // NOLINT
+  return Key<S>{};
+}
+#else
 template <char... C>
 class Key {
  public:
-  static constexpr const inline char kStr[sizeof...(C) + 1]{C...,  // NOLINT
-                                                            '\0'};
-  static constexpr const inline std::string_view kStrView{kStr, sizeof...(C)};
+  static constexpr const char kStr[sizeof...(C) + 1]{C...,  // NOLINT
+                                                     '\0'};
+  static constexpr const std::string_view kStrView{kStr, sizeof...(C)};
   template <typename Type>
-  static constexpr inline auto Bind(Type&& v) {
+  static constexpr auto Bind(Type&& v) {
     return Value<Key, Type>(std::forward<Type>(v));
   }
-  static inline std::string Str() { return {kStrView.data(), kStrView.size()}; }
+  static std::string Str() { return {kStrView.data(), kStrView.size()}; }
 };
 
 template <class CharT, CharT... CS>
 inline constexpr auto operator""_() {  // NOLINT
   return Key<CS...>{};
 }
+#endif
 
 template <
     typename Key, typename Keys, typename TupleOrVector,
@@ -88,7 +125,7 @@ class NamedVector {
   NamedVector(const Keys& keys, Vector* values) : values_(values) {}
   template <typename Key,
             std::enable_if_t<any_match<Key, Keys>::value, bool> = true>
-  inline decltype(auto) operator[](const Key& key) const {
+  decltype(auto) operator[](const Key& key) const {
     return Take<Key, Keys, Vector&>(key, *values_);
   }
 
@@ -169,12 +206,12 @@ class Dict : public std::decay_t<TupleOrVector> {
    */
   template <typename Key,
             std::enable_if_t<any_match<Key, Keys>::value, bool> = true>
-  inline decltype(auto) operator[](const Key& key) {
+  decltype(auto) operator[](const Key& key) {
     return Take<Key, Keys, Values&>(key, *this);
   }
   template <typename Key,
             std::enable_if_t<any_match<Key, Keys>::value, bool> = true>
-  inline decltype(auto) operator[](const Key& key) const {
+  decltype(auto) operator[](const Key& key) const {
     return Take<Key, Keys, const Values&>(key, *this);
   }
 
@@ -307,7 +344,7 @@ std::vector<Array> MakeArray(const std::tuple<Spec...>& specs) {
  * Dynamic version of MakeArray.
  * Takes a vector of `ShapeSpec`.
  */
-std::vector<Array> MakeArray(const std::vector<ShapeSpec>& specs) {
+inline std::vector<Array> MakeArray(const std::vector<ShapeSpec>& specs) {
   return {specs.begin(), specs.end()};
 }
 

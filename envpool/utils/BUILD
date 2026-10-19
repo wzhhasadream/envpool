@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
@@ -28,6 +30,7 @@ cc_test(
     srcs = ["image_process_test.cc"],
     deps = [
         ":image_process",
+        "//envpool/core:logging",
         "@com_google_googletest//:gtest_main",
     ],
 )

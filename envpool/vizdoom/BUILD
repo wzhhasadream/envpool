@@ -12,22 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
-
-genrule(
-    name = "gen_pretrain_weight",
-    srcs = [
-        "@pretrain_weight//:pth",
-    ],
-    outs = [
-        "policy-d1.pth",
-        "policy-d3.pth",
-    ],
-    cmd = "cp $(SRCS) $(@D)",
-)
 
 genrule(
     name = "gen_vizdoom_maps",
@@ -35,8 +25,63 @@ genrule(
         "@vizdoom_lib//:vizdoom_maps",
         "@vizdoom_extra_maps//:vizdoom_maps",
     ],
-    outs = ["maps"],
-    cmd = "mkdir -p $(OUTS) && cp $(SRCS) $(OUTS)",
+    outs = [
+        "maps/D1_basic.cfg",
+        "maps/D1_basic.wad",
+        "maps/D2_navigation.cfg",
+        "maps/D2_navigation.wad",
+        "maps/D3_battle.cfg",
+        "maps/D3_battle.wad",
+        "maps/D4_battle2.cfg",
+        "maps/D4_battle2.wad",
+        "maps/basic.cfg",
+        "maps/basic.wad",
+        "maps/basic_audio.cfg",
+        "maps/basic_audio.wad",
+        "maps/basic_notifications.cfg",
+        "maps/basic_notifications.wad",
+        "maps/cig.cfg",
+        "maps/cig.wad",
+        "maps/cig_with_unknown.wad",
+        "maps/deadly_corridor.cfg",
+        "maps/deadly_corridor.wad",
+        "maps/deathmatch.cfg",
+        "maps/deathmatch.wad",
+        "maps/defend_the_center.cfg",
+        "maps/defend_the_center.wad",
+        "maps/defend_the_line.cfg",
+        "maps/defend_the_line.wad",
+        "maps/doom.cfg",
+        "maps/doom2.cfg",
+        "maps/freedoom1.cfg",
+        "maps/freedoom2.cfg",
+        "maps/health_gathering.cfg",
+        "maps/health_gathering.wad",
+        "maps/health_gathering_supreme.cfg",
+        "maps/health_gathering_supreme.wad",
+        "maps/learning.cfg",
+        "maps/multi.cfg",
+        "maps/multi_deathmatch.wad",
+        "maps/multi_duel.cfg",
+        "maps/multi_duel.wad",
+        "maps/my_way_home.cfg",
+        "maps/my_way_home.wad",
+        "maps/oblige.cfg",
+        "maps/predict_position.cfg",
+        "maps/predict_position.wad",
+        "maps/rocket_basic.cfg",
+        "maps/rocket_basic.wad",
+        "maps/simpler_basic.cfg",
+        "maps/simpler_basic.wad",
+        "maps/take_cover.cfg",
+        "maps/take_cover.wad",
+    ],
+    cmd = """
+mkdir -p "$(@D)/maps"
+for src in $(SRCS); do
+  cp "$${src}" "$(@D)/maps/$$(basename "$${src}")"
+done
+""",
 )
 
 cc_library(
@@ -58,9 +103,12 @@ cc_library(
 pybind_extension(
     name = "vizdoom_envpool",
     srcs = ["vizdoom_envpool.cc"],
-    linkopts = [
-        "-ldl",
-    ],
+    linkopts = select({
+        "//:windows": [],
+        "//conditions:default": [
+            "-ldl",
+        ],
+    }),
     deps = [
         ":vizdoom_env",
         "//envpool/core:py_envpool",
@@ -72,44 +120,61 @@ py_library(
     srcs = ["__init__.py"],
     data = [
         ":gen_vizdoom_maps",
-        ":vizdoom_envpool.so",
+        ":vizdoom_envpool",
         "//envpool/vizdoom/bin:freedoom",
         "//envpool/vizdoom/bin:vizdoom_bin",
         "//envpool/vizdoom/bin:vizdoom_pk3",
     ],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
 py_library(
     name = "vizdoom_registration",
     srcs = ["registration.py"],
+    imports = ["../.."],
     deps = ["//envpool:registration"],
 )
 
 py_test(
+    name = "vizdoom_render_test",
+    size = "small",
+    srcs = ["vizdoom_render_test.py"],
+    imports = ["../.."],
+    tags = ["exclusive"],
+    deps = [
+        ":vizdoom",
+        ":vizdoom_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_test(
     name = "vizdoom_test",
+    size = "medium",
     srcs = ["vizdoom_test.py"],
+    imports = ["../.."],
+    tags = ["exclusive"],
+    deps = [
+        ":vizdoom",
+        ":vizdoom_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "vizdoom_pretrain_test",
+    size = "large",
+    srcs = ["vizdoom_pretrain_test.py"],
+    imports = ["../.."],
+    tags = ["exclusive"],
     deps = [
         ":vizdoom",
         ":vizdoom_registration",
         requirement("numpy"),
         requirement("absl-py"),
         requirement("opencv-python-headless"),
-    ],
-)
-
-py_test(
-    name = "vizdoom_pretrain_test",
-    size = "enormous",
-    srcs = ["vizdoom_pretrain_test.py"],
-    data = [":gen_pretrain_weight"],
-    deps = [
-        ":vizdoom",
-        ":vizdoom_registration",
-        "//envpool/atari:atari_network",
-        requirement("numpy"),
-        requirement("absl-py"),
-        requirement("tianshou"),
-        requirement("torch"),
     ],
 )

@@ -1,7 +1,10 @@
 Build From Source
 =================
 
-We recommend building EnvPool on Ubuntu 22.04 environment.
+We recommend developing EnvPool on Ubuntu 24.04. Release wheels are built for
+Python 3.11-3.14 in ``manylinux_2_28_x86_64`` and
+``manylinux_2_28_aarch64`` environments for Linux, on ``macos-14`` for
+macOS, and on ``windows-2022`` for Windows.
 
 We use `bazel <https://bazel.build/>`_ to build EnvPool. Comparing with
 `pip <https://pip.pypa.io/>`_, using Bazel to build python package with C++ .so
@@ -30,7 +33,7 @@ or `golang <https://golang.org/doc/install>`_ with version >= 1.16:
 
 .. code-block:: bash
 
-    sudo apt install -y golang
+    sudo apt install -y golang-go
     export PATH=$HOME/go/bin:$PATH
     go install github.com/bazelbuild/bazelisk@latest
     ln -sf $HOME/go/bin/bazelisk $HOME/go/bin/bazel
@@ -50,10 +53,10 @@ or `golang <https://golang.org/doc/install>`_ with version >= 1.16:
         # then follow the instructions on golang official website
         go env -w GOPROXY=https://goproxy.cn
 
-        wget https://mirrors.huaweicloud.com/bazel/6.0.0/bazel-6.0.0-linux-x86_64
-        chmod +x bazel-6.0.0-linux-x86_64
+        wget https://mirrors.huaweicloud.com/bazel/8.6.0/bazel-8.6.0-linux-x86_64
+        chmod +x bazel-8.6.0-linux-x86_64
         mkdir -p $HOME/go/bin
-        mv bazel-6.0.0-linux-x86_64 $HOME/go/bin/bazel
+        mv bazel-8.6.0-linux-x86_64 $HOME/go/bin/bazel
 
         export PATH=$PATH:$HOME/go/bin  # or write to .bashrc / .zshrc
 
@@ -66,25 +69,101 @@ or `golang <https://golang.org/doc/install>`_ with version >= 1.16:
 Install Other Dependencies
 --------------------------
 
-EnvPool requires **GCC/G++ version >= 9.0** to build the source code. To install:
+EnvPool source builds share a few common requirements across platforms:
+
+- **Python >= 3.11**
+- **Java 17**
+- **Go >= 1.22** plus ``bazelisk`` / ``bazel``
+- **SWIG**
+- **Qt 5**
+
+The default build and test shortcuts in this repo use **Bazel 8.6.0** via
+``bazelisk``.
+
+Linux (Ubuntu 24.04)
+^^^^^^^^^^^^^^^^^^^^
+
+EnvPool currently builds with the system GCC/G++ toolchain on Ubuntu 24.04. To
+install the required development packages:
 
 .. code-block:: bash
 
-    # optional
-    sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+    sudo apt install -y build-essential openjdk-17-jdk python3-dev \
+      python3-pip python-is-python3 golang-go cmake ninja-build swig qtbase5-dev \
+      qtdeclarative5-dev
 
-    # install
-    sudo apt install -y gcc-9 g++-9 build-essential
+    # Some Bazel Qt rules still look for this legacy include path.
+    sudo ln -sf "$(qmake -query QT_INSTALL_HEADERS)" /usr/include/qt
 
-    # to change the default cc to gcc-9:
-    sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 60 --slave /usr/bin/g++ g++ /usr/bin/g++-9
+macOS
+^^^^^
 
-It also requires **Python version >= 3.7**:
+Install the Xcode Command Line Tools first, then install the user-space
+dependencies with Homebrew:
 
 .. code-block:: bash
 
-    sudo apt install -y python3-dev python3-pip
-    sudo ln -sf /usr/bin/python3 /usr/bin/python
+    xcode-select --install
+    brew install go openjdk@17 cmake ninja swig qt@5
+    sudo ln -sf "$(brew --prefix cmake)/bin/cmake" /usr/local/bin/cmake
+    sudo ln -sf "$(brew --prefix ninja)/bin/ninja" /usr/local/bin/ninja
+
+    export PATH="$(brew --prefix openjdk@17)/bin:$PATH"
+    export BAZEL_RULES_QT_DIR="$(brew --prefix qt@5)"
+
+Windows
+^^^^^^^
+
+Install the following before building from source:
+
+- Visual Studio 2022 (or Build Tools 2022) with the **Desktop development with
+  C++** workload
+- Git for Windows
+- Java 17
+- Go 1.22+
+- Qt 5.15.2 with the ``msvc2019_64`` toolchain
+
+Then install the remaining command-line dependencies and export the Bazel / Qt
+environment variables:
+
+.. code-block:: powershell
+
+    choco install -y cmake make ninja strawberryperl swig
+    $env:BAZEL_SH = "C:/Program Files/Git/usr/bin/bash.exe"
+    $env:QT_ROOT_DIR = "C:/Qt/5.15.2/msvc2019_64"
+    $env:BAZEL_RULES_QT_DIR = $env:QT_ROOT_DIR
+    $env:PATH = "$env:QT_ROOT_DIR\\bin;$env:PATH"
+
+If you want to reproduce the Windows MuJoCo render validation from CI, install
+Mesa software OpenGL as well and export:
+
+.. code-block:: powershell
+
+    $env:ENVPOOL_DLL_DIR = "C:/mesa"
+    $env:GALLIUM_DRIVER = "llvmpipe"
+    $env:MESA_GL_VERSION_OVERRIDE = "4.5COMPAT"
+
+EnvPool loads ``libglapi.dll``, ``libgallium_wgl.dll``, and
+``opengl32.dll`` from ``ENVPOOL_DLL_DIR`` before the Windows MuJoCo render
+tests and before the GLFW-backed render path.
+
+Qt runtime in wheels
+^^^^^^^^^^^^^^^^^^^^
+
+Linux release wheels intentionally exclude the Qt shared libraries used by
+Procgen (``libQt5Core.so.5`` and ``libQt5Gui.so.5``) from ``auditwheel``
+repair. Bundling those libraries also pulls in a large Qt / ICU runtime stack,
+so Procgen users on Linux should install the system Qt 5 runtime instead, for
+example with ``apt install qtbase5-dev`` or ``dnf install qt5-qtbase``.
+
+Windows release wheels currently bundle the Qt runtime DLLs required by
+Procgen (``Qt5Core.dll`` and ``Qt5Gui.dll``) directly next to
+``procgen_envpool.pyd``. End users installing the wheel do **not** need a
+separate Qt installation at runtime on Windows.
+
+Source builds still require a local Qt 5 installation so Bazel can compile and
+link against Qt. Linux and macOS continue to rely on system Qt packages at
+build time.
 
 Install CUDA to enable XLA: see https://developer.nvidia.com/cuda-downloads
 
@@ -143,8 +222,24 @@ We provide several shortcuts to make things easier.
     # This will automatically run the tests
     make bazel-test
 
+    # On Windows, export ENVPOOL_DLL_DIR/GALLIUM_DRIVER/
+    # MESA_GL_VERSION_OVERRIDE first if you want MuJoCo render to use Mesa.
+
+    # This will generate a merged Python + C/C++ LCOV report
+    make bazel-coverage
+
+    # Normalize LCOV source paths before rendering HTML with genhtml
+    python3 scripts/coverage_summary.py \
+      --lcov bazel-out/_coverage/_coverage_report.dat \
+      --genhtml-lcov-file coverage/lcov.genhtml.info \
+      --repo-root "$PWD"
+
     # This will build a wheel for release
     make bazel-release
+
+    # This will install the built wheel and run the release smoke, including
+    # one render() call after reset() for the wheel smoke envs.
+    make release-test
 
 
 Use Docker to Create Develop Environment
@@ -159,13 +254,3 @@ develop environment, run
 
 The code is under ``/app``, and you can communicate with the host machine file
 system via ``/host``.
-
-.. note ::
-
-    For users in mainland China:
-
-    .. code-block:: bash
-
-        make docker-dev-cn
-
-    See `Issue #87 <https://github.com/sail-sg/envpool/issues/87>`_.

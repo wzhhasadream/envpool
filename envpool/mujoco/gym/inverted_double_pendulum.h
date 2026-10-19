@@ -31,22 +31,28 @@ namespace mujoco_gym {
 class InvertedDoublePendulumEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("reward_threshold"_.Bind(9100.0), "frame_skip"_.Bind(5),
-                    "post_constraint"_.Bind(true), "healthy_reward"_.Bind(10.0),
-                    "healthy_z_max"_.Bind(1.0), "observation_min"_.Bind(-10.0),
-                    "observation_max"_.Bind(10.0),
-                    "reset_noise_scale"_.Bind(0.1));
+    return MakeDict(
+        "reward_threshold"_.Bind(9100.0), "frame_skip"_.Bind(5),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+        "post_constraint"_.Bind(true), "healthy_reward"_.Bind(10.0),
+        "reward_if_not_terminated"_.Bind(false), "constraint_obs_dim"_.Bind(3),
+        "xml_file"_.Bind(std::string("inverted_double_pendulum.xml")),
+        "gymnasium_v5_render_camera"_.Bind(false), "healthy_z_max"_.Bind(1.0),
+        "observation_min"_.Bind(-10.0), "observation_max"_.Bind(10.0),
+        "reset_noise_scale"_.Bind(0.1));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
+    int obs_n = 1 + 2 + 2 + 3 + conf["constraint_obs_dim"_];
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
 #ifdef ENVPOOL_TEST
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({11}, {-inf, inf})),
                     "info:qpos0"_.Bind(Spec<mjtNum>({3})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({3})));
-#else
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({11}, {-inf, inf})));
+                    "info:qvel0"_.Bind(Spec<mjtNum>({3})),
 #endif
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
+                                          conf["frame_stack"_])));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -55,22 +61,43 @@ class InvertedDoublePendulumEnvFns {
 };
 
 using InvertedDoublePendulumEnvSpec = EnvSpec<InvertedDoublePendulumEnvFns>;
+using InvertedDoublePendulumPixelEnvFns =
+    PixelObservationEnvFns<InvertedDoublePendulumEnvFns>;  // NOLINT
+using InvertedDoublePendulumPixelEnvSpec =
+    EnvSpec<InvertedDoublePendulumPixelEnvFns>;  // NOLINT
 
-class InvertedDoublePendulumEnv : public Env<InvertedDoublePendulumEnvSpec>,
-                                  public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class InvertedDoublePendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
+  bool reward_if_not_terminated_;
+  int constraint_obs_dim_;
   mjtNum healthy_reward_, healthy_z_max_;
   mjtNum observation_min_, observation_max_;
   std::uniform_real_distribution<> dist_qpos_;
   std::normal_distribution<> dist_qvel_;
 
  public:
-  InvertedDoublePendulumEnv(const Spec& spec, int env_id)
-      : Env<InvertedDoublePendulumEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] +
-                      "/mujoco/assets_gym/inverted_double_pendulum.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  InvertedDoublePendulumEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
+        reward_if_not_terminated_(spec.config["reward_if_not_terminated"_]),
+        constraint_obs_dim_(spec.config["constraint_obs_dim"_]),
         healthy_reward_(spec.config["healthy_reward"_]),
         healthy_z_max_(spec.config["healthy_z_max"_]),
         observation_min_(spec.config["observation_min"_]),
@@ -98,63 +125,91 @@ class InvertedDoublePendulumEnv : public Env<InvertedDoublePendulumEnvSpec>,
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0);
+    WriteState(0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
+    double reward_sum = 0.0;
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
 
-    // dist_penalty
-    mjtNum x = data_->site_xpos[0];
-    mjtNum y = data_->site_xpos[2];
-    mjtNum dist_penalty = 0.01 * x * x + (y - 2) * (y - 2);
-    // vel_penalty
-    mjtNum v1 = data_->qvel[1];
-    mjtNum v2 = data_->qvel[2];
-    mjtNum vel_penalty = 1e-3 * v1 * v1 + 5e-3 * v2 * v2;
-    // reward and done
-    auto reward =
-        static_cast<float>(healthy_reward_ - dist_penalty - vel_penalty);
-    ++elapsed_step_;
-    done_ = !IsHealthy() || (elapsed_step_ >= max_episode_steps_);
-    WriteState(reward);
+      // dist_penalty
+      mjtNum x = data_->site_xpos[0];
+      mjtNum y = data_->site_xpos[2];
+      mjtNum dist_penalty = 0.01 * x * x + (y - 2) * (y - 2);
+      // vel_penalty
+      mjtNum v1 = data_->qvel[1];
+      mjtNum v2 = data_->qvel[2];
+      mjtNum vel_penalty = 1e-3 * v1 * v1 + 5e-3 * v2 * v2;
+      // reward and done
+      bool terminated = !IsHealthy();
+      mjtNum alive_bonus = reward_if_not_terminated_
+                               ? healthy_reward_ * static_cast<int>(!terminated)
+                               : healthy_reward_;
+      auto reward =
+          static_cast<float>(alive_bonus - dist_penalty - vel_penalty);
+      ++elapsed_step_;
+      done_ = terminated || (elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), false);
+        break;
+      }
+    }
   }
 
  private:
   bool IsHealthy() { return data_->site_xpos[2] > healthy_z_max_; }
 
-  void WriteState(float reward) {
-    State state = Allocate();
+  void WriteState(float reward, bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    *(obs++) = data_->qpos[0];
-    *(obs++) = std::sin(data_->qpos[1]);
-    *(obs++) = std::sin(data_->qpos[2]);
-    *(obs++) = std::cos(data_->qpos[1]);
-    *(obs++) = std::cos(data_->qpos[2]);
-    for (int i = 0; i < model_->nv; ++i) {
-      mjtNum x = data_->qvel[i];
-      x = std::min(observation_max_, x);
-      x = std::max(observation_min_, x);
-      *(obs++) = x;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      *(obs++) = data_->qpos[0];
+      *(obs++) = std::sin(data_->qpos[1]);
+      *(obs++) = std::sin(data_->qpos[2]);
+      *(obs++) = std::cos(data_->qpos[1]);
+      *(obs++) = std::cos(data_->qpos[2]);
+      for (int i = 0; i < model_->nv; ++i) {
+        mjtNum x = data_->qvel[i];
+        x = std::min(observation_max_, x);
+        x = std::max(observation_min_, x);
+        *(obs++) = x;
+      }
+      for (int i = 0; i < constraint_obs_dim_; ++i) {
+        mjtNum x = data_->qfrc_constraint[i];
+        x = std::min(observation_max_, x);
+        x = std::max(observation_min_, x);
+        *(obs++) = x;
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < model_->nv; ++i) {
-      mjtNum x = data_->qfrc_constraint[i];
-      x = std::min(observation_max_, x);
-      x = std::max(observation_min_, x);
-      *(obs++) = x;
-    }
-    // info
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_, model_->nq);
     state["info:qvel0"_].Assign(qvel0_, model_->nv);
 #endif
   }
 };
-
+using InvertedDoublePendulumEnv =
+    InvertedDoublePendulumEnvBase<InvertedDoublePendulumEnvSpec,  // NOLINT
+                                  false>;                         // NOLINT
+using InvertedDoublePendulumPixelEnv =
+    InvertedDoublePendulumEnvBase<InvertedDoublePendulumPixelEnvSpec,  // NOLINT
+                                  true>;                               // NOLINT
 using InvertedDoublePendulumEnvPool = AsyncEnvPool<InvertedDoublePendulumEnv>;
+using InvertedDoublePendulumPixelEnvPool =
+    AsyncEnvPool<InvertedDoublePendulumPixelEnv>;  // NOLINT
 
 }  // namespace mujoco_gym
 

@@ -104,7 +104,8 @@ template <typename Spec>
 struct SpecTupleHelper {
   static decltype(auto) Make(const Spec& spec) {
     return std::make_tuple(py::dtype::of<typename Spec::dtype>(), spec.shape,
-                           spec.bounds, spec.elementwise_bounds);
+                           spec.bounds, spec.elementwise_bounds,
+                           spec.is_discrete);
   }
 };
 
@@ -121,15 +122,16 @@ struct SpecTupleHelper<Spec<Container<dtype>>> {
     return std::make_tuple(py::dtype::of<dtype>(),
                            std::make_tuple(spec.shape, spec.inner_spec.shape),
                            spec.inner_spec.bounds,
-                           spec.inner_spec.elementwise_bounds);
+                           spec.inner_spec.elementwise_bounds,
+                           spec.inner_spec.is_discrete);
   }
 };
 
 template <typename... Spec>
-decltype(auto) ExportSpecs(const std::tuple<Spec...>& specs) {
+py::tuple ExportSpecs(const std::tuple<Spec...>& specs) {
   return std::apply(
       [&](auto&&... spec) {
-        return std::make_tuple(SpecTupleHelper<Spec>::Make(spec)...);
+        return py::make_tuple(SpecTupleHelper<Spec>::Make(spec)...);
       },
       specs);
 }
@@ -142,8 +144,6 @@ class PyEnvSpec : public EnvSpec {
   using ActionSpecT =
       decltype(ExportSpecs(std::declval<typename EnvSpec::ActionSpec>()));
 
-  StateSpecT py_state_spec;
-  ActionSpecT py_action_spec;
   typename EnvSpec::ConfigValues py_config_values;
   static std::vector<std::string> py_config_keys;
   static std::vector<std::string> py_state_keys;
@@ -151,10 +151,11 @@ class PyEnvSpec : public EnvSpec {
   static typename EnvSpec::ConfigValues py_default_config_values;
 
   explicit PyEnvSpec(const typename EnvSpec::ConfigValues& conf)
-      : EnvSpec(conf),
-        py_state_spec(ExportSpecs(EnvSpec::state_spec)),
-        py_action_spec(ExportSpecs(EnvSpec::action_spec)),
-        py_config_values(EnvSpec::config.AllValues()) {}
+      : EnvSpec(conf), py_config_values(EnvSpec::config.AllValues()) {}
+
+  StateSpecT StateSpecPy() const { return ExportSpecs(EnvSpec::state_spec); }
+
+  ActionSpecT ActionSpecPy() const { return ExportSpecs(EnvSpec::action_spec); }
 };
 template <typename EnvSpec>
 std::vector<std::string> PyEnvSpec<EnvSpec>::py_config_keys =
@@ -199,8 +200,8 @@ void ToArray(const std::vector<py::array>& py_arrs,
 }
 
 /**
- * Templated subclass of EnvPool,
- * to be overrided by the real EnvPool.
+ * Template subclass of EnvPool,
+ * to be overridden by the real EnvPool.
  */
 template <typename EnvPool>
 class PyEnvPool : public EnvPool {
@@ -215,26 +216,26 @@ class PyEnvPool : public EnvPool {
       : EnvPool(py_spec), py_spec(py_spec) {}
 
   /**
-   * get xla functions
+   * Get XLA functions.
    */
-  auto Xla() {
+  py::tuple Xla() {
     if (HasContainerType(EnvPool::spec.state_spec)) {
       throw std::runtime_error(
-          "State of this env has dynamic shaped container, xla is disabled");
+          "State of this env has dynamic shaped container, XLA is disabled");
     }
     if (HasDynamicDim(EnvPool::spec.state_spec)) {
       throw std::runtime_error(
-          "State of this env has dynamic (-1) shape, xla is disabled");
+          "State of this env has dynamic (-1) shape, XLA is disabled");
     }
     if (EnvPool::spec.config["max_num_players"_] != 1) {
       throw std::runtime_error(
           "Xla is not available for multiplayer environment.");
     }
-    return std::make_tuple(
-        std::make_tuple("recv",
-                        CustomCall<EnvPool, XlaRecv<EnvPool>>::Xla(this)),
-        std::make_tuple("send",
-                        CustomCall<EnvPool, XlaSend<EnvPool>>::Xla(this)));
+    return py::make_tuple(
+        py::make_tuple("recv",
+                       CustomCall<EnvPool, XlaRecv<EnvPool>>::Xla(this)),
+        py::make_tuple("send",
+                       CustomCall<EnvPool, XlaSend<EnvPool>>::Xla(this)));
   }
 
   /**
@@ -273,6 +274,17 @@ class PyEnvPool : public EnvPool {
     py::gil_scoped_release release;
     EnvPool::Reset(arr);
   }
+
+  py::array PyRender(const py::array& env_ids, int width, int height,
+                     int camera_id) {
+    Array rendered;
+    {
+      auto arr = NumpyToArrayIncRef<int>(env_ids);
+      py::gil_scoped_release release;
+      rendered = EnvPool::Render(arr, width, height, camera_id);
+    }
+    return ArrayToNumpyHelper<unsigned char>::Convert(rendered);
+  }
 };
 
 template <typename EnvPool>
@@ -282,32 +294,42 @@ template <typename EnvPool>
 std::vector<std::string> PyEnvPool<EnvPool>::py_action_keys =
     PyEnvPool<EnvPool>::PySpec::py_action_keys;
 
-py::object abc_meta = py::module::import("abc").attr("ABCMeta");
-
 /**
  * Call this macro in the translation unit of each envpool instance
  * It will register the envpool instance to the registry.
  * The static bool status is local to the translation unit.
  */
-#define REGISTER(MODULE, SPEC, ENVPOOL)                              \
-  py::class_<SPEC>(MODULE, "_" #SPEC, py::metaclass(abc_meta))       \
-      .def(py::init<const typename SPEC::ConfigValues&>())           \
-      .def_readonly("_config_values", &SPEC::py_config_values)       \
-      .def_readonly("_state_spec", &SPEC::py_state_spec)             \
-      .def_readonly("_action_spec", &SPEC::py_action_spec)           \
-      .def_readonly_static("_state_keys", &SPEC::py_state_keys)      \
-      .def_readonly_static("_action_keys", &SPEC::py_action_keys)    \
-      .def_readonly_static("_config_keys", &SPEC::py_config_keys)    \
-      .def_readonly_static("_default_config_values",                 \
-                           &SPEC::py_default_config_values);         \
-  py::class_<ENVPOOL>(MODULE, "_" #ENVPOOL, py::metaclass(abc_meta)) \
-      .def(py::init<const SPEC&>())                                  \
-      .def_readonly("_spec", &ENVPOOL::py_spec)                      \
-      .def("_recv", &ENVPOOL::PyRecv)                                \
-      .def("_send", &ENVPOOL::PySend)                                \
-      .def("_reset", &ENVPOOL::PyReset)                              \
-      .def_readonly_static("_state_keys", &ENVPOOL::py_state_keys)   \
-      .def_readonly_static("_action_keys", &ENVPOOL::py_action_keys) \
+// clang-format off
+#define REGISTER(MODULE, SPEC, ENVPOOL)                                       \
+  py::class_<SPEC>(MODULE, "_" #SPEC,                                         \
+                   py::metaclass(py::module_::import("abc").attr("ABCMeta"))) \
+      .def(py::init<const typename SPEC::ConfigValues&>())                    \
+      .def_readonly("_config_values", &SPEC::py_config_values)                \
+      .def_property_readonly("_state_spec",                                   \
+                             [](const SPEC& self) {                            \
+                               return self.StateSpecPy();                     \
+                             })                                               \
+      .def_property_readonly("_action_spec",                                  \
+                             [](const SPEC& self) {                           \
+                               return self.ActionSpecPy();                    \
+                             })                                               \
+      .def_readonly_static("_state_keys", &SPEC::py_state_keys)               \
+      .def_readonly_static("_action_keys", &SPEC::py_action_keys)             \
+      .def_readonly_static("_config_keys", &SPEC::py_config_keys)             \
+      .def_readonly_static("_default_config_values",                          \
+                           &SPEC::py_default_config_values);                  \
+  py::class_<ENVPOOL>(                                                        \
+      MODULE, "_" #ENVPOOL,                                                   \
+      py::metaclass(py::module_::import("abc").attr("ABCMeta")))              \
+      .def(py::init<const SPEC&>())                                           \
+      .def_readonly("_spec", &ENVPOOL::py_spec)                               \
+      .def("_recv", &ENVPOOL::PyRecv)                                         \
+      .def("_send", &ENVPOOL::PySend)                                         \
+      .def("_reset", &ENVPOOL::PyReset)                                       \
+      .def("_render", &ENVPOOL::PyRender)                                     \
+      .def_readonly_static("_state_keys", &ENVPOOL::py_state_keys)            \
+      .def_readonly_static("_action_keys", &ENVPOOL::py_action_keys)          \
       .def("_xla", &ENVPOOL::Xla);
+// clang-format on
 
 #endif  // ENVPOOL_CORE_PY_ENVPOOL_H_

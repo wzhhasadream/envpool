@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@pip_requirements//:requirements.bzl", "requirement")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//envpool:requirements.bzl", "requirement")
 
 py_library(
     name = "dummy",
     srcs = ["__init__.py"],
-    data = [":dummy_envpool.so"],
+    data = [":dummy_envpool"],
+    imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
 
@@ -38,6 +41,7 @@ cc_test(
     srcs = ["dummy_envpool_test.cc"],
     deps = [
         ":dummy_envpool_h",
+        "//envpool/core:logging",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -45,10 +49,12 @@ cc_test(
 py_test(
     name = "dummy_py_envpool_test",
     srcs = ["dummy_py_envpool_test.py"],
-    data = ["dummy_envpool.so"],
+    data = [":dummy_envpool"],
+    imports = ["../.."],
     deps = [
         requirement("numpy"),
         requirement("absl-py"),
+        "//envpool/python:api",
     ],
 )
 
@@ -57,9 +63,12 @@ pybind_extension(
     srcs = [
         "dummy_envpool.cc",
     ],
-    linkopts = [
-        "-ldl",
-    ],
+    linkopts = select({
+        "//:windows": [],
+        "//conditions:default": [
+            "-ldl",
+        ],
+    }),
     deps = [
         ":dummy_envpool_h",
         "//envpool/core:py_envpool",

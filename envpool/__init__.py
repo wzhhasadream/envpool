@@ -13,24 +13,46 @@
 # limitations under the License.
 """EnvPool package for efficient RL environment simulation."""
 
-import envpool.entry  # noqa: F401
-from envpool.registration import (
-  list_all_envs,
-  make,
-  make_dm,
-  make_gym,
-  make_gymnasium,
-  make_spec,
-  register,
-)
+from envpool.python.glfw_context import preload_windows_gl_dlls
 
-__version__ = "0.8.4"
+# Prepend the Mesa userspace stack before loading MuJoCo bindings so Windows
+# native WGL code resolves the bundled OpenGL DLLs instead of the system 1.1
+# fallback available on GitHub-hosted runners.
+preload_windows_gl_dlls()
+
+import envpool.entry  # noqa: F401
+from envpool.python.protocol import (
+    DMEnvPool,
+    EnvPool,
+    EnvSpec,
+    GymnasiumEnvPool,
+)
+from envpool.registration import (
+    list_all_envs,
+    make,
+    make_dm,
+    make_gym,
+    make_gymnasium,
+    make_multitask,
+    make_spec,
+    register,
+)
+from envpool.wrappers import PixelObservationLayout, SameStepAutoReset
+
+__version__ = "1.2.5+apex.hb1"
 __all__ = [
-  "register",
-  "make",
-  "make_dm",
-  "make_gym",
-  "make_gymnasium",
-  "make_spec",
-  "list_all_envs",
+    "SameStepAutoReset",
+    "PixelObservationLayout",
+    "register",
+    "make",
+    "make_dm",
+    "make_gym",
+    "make_gymnasium",
+    "make_multitask",
+    "make_spec",
+    "list_all_envs",
+    "EnvSpec",
+    "EnvPool",
+    "DMEnvPool",
+    "GymnasiumEnvPool",
 ]

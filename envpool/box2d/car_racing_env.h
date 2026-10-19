@@ -18,7 +18,7 @@
 #ifndef ENVPOOL_BOX2D_CAR_RACING_ENV_H_
 #define ENVPOOL_BOX2D_CAR_RACING_ENV_H_
 
-#include <box2d/box2d.h>
+#include <Box2D/Box2D.h>
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "car_dynamics.h"
+#include "envpool/core/env.h"
 #include "utils.h"
 
 namespace box2d {
@@ -48,7 +49,7 @@ class CarRacingFrictionDetector : public b2ContactListener {
   void Contact(b2Contact* contact, bool begin);
 };
 
-class CarRacingBox2dEnv {
+class CarRacingBox2dEnv : public RenderableEnv {
   const int kStateW = 96;
   const int kStateH = 96;
   const int kWindowW = 1000;
@@ -97,10 +98,19 @@ class CarRacingBox2dEnv {
   std::vector<UserData*> roads_;
   // pair of position and color
   std::vector<std::pair<std::array<b2Vec2, 4>, cv::Scalar>> roads_poly_;
+  [[nodiscard]] std::array<float, 7> BodyState(const b2Body* body) const;
+  [[nodiscard]] std::vector<float> TrackState() const;
+  [[nodiscard]] std::vector<float> RoadPolyState() const;
+  [[nodiscard]] std::vector<float> RoadColorState() const;
+  [[nodiscard]] std::array<float, 35> CarBodyStates() const;
+  [[nodiscard]] std::array<float, 20> CarWheelStates() const;
 
  public:
   CarRacingBox2dEnv(int max_episode_steps, float lap_complete_percent);
+  std::pair<int, int> RenderSize(int width, int height) const override;
   void Render();
+  void Render(int width, int height, int camera_id,
+              unsigned char* rgb) override;
 
   void RenderRoad(float zoom, const std::array<float, 2>& translation,
                   float angle);

@@ -40,20 +40,29 @@ std::string GetFingerXML(const std::string& base_path,
 class FingerEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(2),
+    return MakeDict("frame_skip"_.Bind(2), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("spin")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
-    return MakeDict("obs:position"_.Bind(Spec<mjtNum>({4})),
-                    "obs:velocity"_.Bind(Spec<mjtNum>({3})),
-                    "obs:touch"_.Bind(Spec<mjtNum>({2})),
-                    "obs:target_position"_.Bind(Spec<mjtNum>({2})),
-                    "obs:dist_to_target"_.Bind(Spec<mjtNum>({}))
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs:position"_.Bind(
+            StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
+        "obs:velocity"_.Bind(
+            StackSpec(Spec<mjtNum>({3}), conf["frame_stack"_])),
+        "obs:touch"_.Bind(StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_])),
+        "obs:target_position"_.Bind(
+            StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_])),
+        "obs:dist_to_target"_.Bind(
+            StackSpec(Spec<mjtNum>({}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
-                        ,
-                    "info:qpos0"_.Bind(Spec<mjtNum>({3})),
-                    "info:target"_.Bind(Spec<mjtNum>({1}))
+            ,
+        "info:qpos0"_.Bind(Spec<mjtNum>({3})),
+        "info:target"_.Bind(Spec<mjtNum>({1}))
 #endif
     );  // NOLINT
   }
@@ -64,9 +73,16 @@ class FingerEnvFns {
 };
 
 using FingerEnvSpec = EnvSpec<FingerEnvFns>;
+using FingerPixelEnvFns = PixelObservationEnvFns<FingerEnvFns>;
+using FingerPixelEnvSpec = EnvSpec<FingerPixelEnvFns>;
 
-class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   const mjtNum kEasyTargetSize = 0.07;
   const mjtNum kHardTargetSize = 0.03;
   const mjtNum kSpinVelocity = 15;
@@ -84,12 +100,20 @@ class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
 #endif
 
  public:
-  FingerEnv(const Spec& spec, int env_id)
-      : Env<FingerEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  FingerEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
             GetFingerXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_]),
+            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         id_site_target_(mj_name2id(model_, mjOBJ_SITE, "target")),
         id_site_tip_(mj_name2id(model_, mjOBJ_SITE, "tip")),
         id_hinge_(GetQvelId(model_, "hinge")),
@@ -121,8 +145,8 @@ class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
       // physics.named.model.site_rgba['target', 3] = 0
       // physics.named.model.site_rgba['tip', 3] = 0
       // physics.named.model.dof_damping['hinge'] = .03
-      model_->site_rgba[id_site_target_ * 3 + 3] = 0;
-      model_->site_rgba[id_site_tip_ * 3 + 3] = 0;
+      model_->site_rgba[id_site_target_ * 4 + 3] = 0;
+      model_->site_rgba[id_site_tip_ * 4 + 3] = 0;
       model_->dof_damping[id_hinge_] = 0.03;
     } else {
       // target_angle = self.random.uniform(-np.pi, np.pi)
@@ -154,13 +178,13 @@ class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -173,24 +197,40 @@ class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
   bool TaskShouldTerminateEpisode() override { return false; }
 
  private:
-  void WriteState() {
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    const auto& bound_pos = BoundedPosition();
-    const auto& velocity = Velocity();
-    const auto& touch = Touch();
-    state["obs:position"_].Assign(bound_pos.begin(), bound_pos.size());
-    state["obs:velocity"_].Assign(velocity.begin(), velocity.size());
-    state["obs:touch"_].Assign(touch.begin(), touch.size());
-    if (!is_spin_) {
-      const auto& target_position = TargetPosition();
-      state["obs:target_position"_].Assign(target_position.begin(),
-                                           target_position.size());
-      state["obs:dist_to_target"_] = DistToTarget();
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& bound_pos = BoundedPosition();
+      const auto& velocity = Velocity();
+      const auto& touch = Touch();
+      auto obs_position = state["obs:position"_];
+      AssignObservation("obs:position", &obs_position, bound_pos.data(),
+                        bound_pos.size(), reset);
+      auto obs_velocity = state["obs:velocity"_];
+      AssignObservation("obs:velocity", &obs_velocity, velocity.data(),
+                        velocity.size(), reset);
+      auto obs_touch = state["obs:touch"_];
+      AssignObservation("obs:touch", &obs_touch, touch.data(), touch.size(),
+                        reset);
+      if (!is_spin_) {
+        const auto& target_position = TargetPosition();
+        auto obs_target_position = state["obs:target_position"_];
+        AssignObservation("obs:target_position", &obs_target_position,
+                          target_position.data(), target_position.size(),
+                          reset);
+        auto obs_dist_to_target = state["obs:dist_to_target"_];
+        AssignObservation("obs:dist_to_target", &obs_dist_to_target,
+                          DistToTarget(), reset);
+      }
     }
-    // info
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
     if (!is_spin_) {
@@ -278,7 +318,10 @@ class FingerEnv : public Env<FingerEnvSpec>, public MujocoEnv {
   }
 };
 
+using FingerEnv = FingerEnvBase<FingerEnvSpec, false>;
+using FingerPixelEnv = FingerEnvBase<FingerPixelEnvSpec, true>;
 using FingerEnvPool = AsyncEnvPool<FingerEnv>;
+using FingerPixelEnvPool = AsyncEnvPool<FingerPixelEnv>;
 
 }  // namespace mujoco_dmc
 

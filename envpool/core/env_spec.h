@@ -23,18 +23,18 @@
 #include "envpool/core/array.h"
 #include "envpool/core/dict.h"
 
-auto common_config =
-    MakeDict("num_envs"_.Bind(1), "batch_size"_.Bind(0), "num_threads"_.Bind(0),
-             "max_num_players"_.Bind(1), "thread_affinity_offset"_.Bind(-1),
-             "base_path"_.Bind(std::string("envpool")), "seed"_.Bind(42),
-             "gym_reset_return_info"_.Bind(false),
-             "max_episode_steps"_.Bind(std::numeric_limits<int>::max()));
+inline auto common_config = MakeDict(
+    "num_envs"_.Bind(1), "batch_size"_.Bind(0), "num_threads"_.Bind(0),
+    "max_num_players"_.Bind(1), "thread_affinity_offset"_.Bind(-1),
+    "base_path"_.Bind(std::string("envpool")), "seed"_.Bind(42),
+    "env_seed"_.Bind(std::vector<int>{}), "gym_reset_return_info"_.Bind(true),
+    "max_episode_steps"_.Bind(std::numeric_limits<int>::max()));
 // Note: this action order is hardcoded in async_envpool Send function
 // and env ParseAction function for performance
-auto common_action_spec = MakeDict("env_id"_.Bind(Spec<int>({})),
-                                   "players.env_id"_.Bind(Spec<int>({-1})));
+inline auto common_action_spec = MakeDict(
+    "env_id"_.Bind(Spec<int>({})), "players.env_id"_.Bind(Spec<int>({-1})));
 // Note: this state order is hardcoded in async_envpool Recv function
-auto common_state_spec =
+inline auto common_state_spec =
     MakeDict("info:env_id"_.Bind(Spec<int>({})),
              "info:players.env_id"_.Bind(Spec<int>({-1})),
              "elapsed_step"_.Bind(Spec<int>({})), "done"_.Bind(Spec<bool>({})),
@@ -43,7 +43,7 @@ auto common_state_spec =
              "step_type"_.Bind(Spec<int>({})), "trunc"_.Bind(Spec<bool>({})));
 
 /**
- * EnvSpec funciton, it constructs the env spec when a Config is passed.
+ * EnvSpec function, it constructs the env spec when a Config is passed.
  */
 template <typename EnvFns>
 class EnvSpec {

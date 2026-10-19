@@ -14,222 +14,408 @@
 """Protocol of C++ EnvPool."""
 
 from typing import (
-  Any,
-  Callable,
-  Dict,
-  List,
-  NamedTuple,
-  Optional,
-  Tuple,
-  Type,
-  Union,
+    Any,
+    Callable,
+    Literal,
+    Sequence,
+    overload,
 )
 
-import dm_env
-import gym
 import numpy as np
 from dm_env import TimeStep
+from typing_extensions import Protocol, TypeAlias
 
-try:
-  from typing import Protocol
-except ImportError:
-  from typing_extensions import Protocol  # type: ignore
+ObsType: TypeAlias = Any
+InfoDict: TypeAlias = dict[str, Any]
+ActionInput: TypeAlias = dict[str, Any] | np.ndarray
+RenderEnvId: TypeAlias = int | Sequence[int] | np.ndarray | None
+GymnasiumResetReturn: TypeAlias = tuple[ObsType, InfoDict]
+GymnasiumStepReturn: TypeAlias = tuple[ObsType, Any, Any, Any, InfoDict]
 
 
 class EnvSpec(Protocol):
-  """Cpp EnvSpec class."""
+    """Cpp EnvSpec class."""
 
-  _config_keys: List[str]
-  _default_config_values: Tuple
-  gen_config: Type
+    _config_keys: list[str]
+    _default_config_values: tuple
+    gen_config: type
 
-  def __init__(self, config: Tuple):
-    """Protocol for constructor of EnvSpec."""
+    def __init__(self, config: tuple):
+        """Protocol for constructor of EnvSpec."""
 
-  @property
-  def _state_spec(self) -> Tuple:
-    """Cpp private _state_spec."""
+    @property
+    def _state_spec(self) -> tuple:
+        """Cpp private _state_spec."""
 
-  @property
-  def _action_spec(self) -> Tuple:
-    """Cpp private _action_spec."""
+    @property
+    def _action_spec(self) -> tuple:
+        """Cpp private _action_spec."""
 
-  @property
-  def _state_keys(self) -> List:
-    """Cpp private _state_keys."""
+    @property
+    def _state_keys(self) -> list:
+        """Cpp private _state_keys."""
 
-  @property
-  def _action_keys(self) -> List:
-    """Cpp private _action_keys."""
+    @property
+    def _action_keys(self) -> list:
+        """Cpp private _action_keys."""
 
-  @property
-  def _config_values(self) -> Tuple:
-    """Cpp private _config_values."""
+    @property
+    def _config_values(self) -> tuple:
+        """Cpp private _config_values."""
 
-  @property
-  def config(self) -> NamedTuple:
-    """Configuration used to create the current EnvSpec."""
+    @property
+    def config(self) -> Any:
+        """Configuration used to create the current EnvSpec."""
 
-  @property
-  def state_array_spec(self) -> Dict[str, Any]:
-    """Specs of the states of the environment in ArraySpec format."""
+    @property
+    def state_array_spec(self) -> dict[str, Any]:
+        """Specs of the states of the environment in ArraySpec format."""
 
-  @property
-  def action_array_spec(self) -> Dict[str, Any]:
-    """Specs of the actions of the environment in ArraySpec format."""
+    @property
+    def action_array_spec(self) -> dict[str, Any]:
+        """Specs of the actions of the environment in ArraySpec format."""
 
-  def observation_spec(self) -> Dict[str, Any]:
-    """Specs of the observations of the environment in dm_env format."""
+    def observation_spec(self) -> Any:
+        """Specs of the observations of the environment in dm_env format."""
 
-  def action_spec(self) -> Union[dm_env.specs.Array, Dict[str, Any]]:
-    """Specs of the actions of the environment in dm_env format."""
+    def action_spec(self) -> Any:
+        """Specs of the actions of the environment in dm_env format."""
 
-  @property
-  def observation_space(self) -> Dict[str, Any]:
-    """Specs of the observations of the environment in gym.Env format."""
+    @property
+    def observation_space(self) -> Any:
+        """Specs of the observations of the environment in gym.Env format."""
 
-  @property
-  def action_space(self) -> Union[gym.Space, Dict[str, Any]]:
-    """Specs of the actions of the environment in gym.Env format."""
+    @property
+    def action_space(self) -> Any:
+        """Specs of the actions of the environment in gym.Env format."""
 
-  @property
-  def reward_threshold(self) -> Optional[float]:
-    """Reward threshold, None for no threshold."""
+    @property
+    def gymnasium_observation_space(
+        self,
+    ) -> Any:
+        """Specs of the observations of the environment in gymnasium format."""
+
+    @property
+    def gymnasium_action_space(
+        self,
+    ) -> Any:
+        """Specs of the actions of the environment in gymnasium format."""
+
+    @property
+    def reward_threshold(self) -> float | None:
+        """Reward threshold, None for no threshold."""
 
 
-class ArraySpec(object):
-  """Spec of numpy array."""
+class ArraySpec:
+    """Spec of numpy array."""
 
-  def __init__(
-    self, dtype: Type, shape: List[int], bounds: Tuple[Any, Any],
-    element_wise_bounds: Tuple[Any, Any]
-  ):
-    """Constructor of ArraySpec."""
-    self.dtype = dtype
-    self.shape = shape
-    if element_wise_bounds[0]:
-      self.minimum = np.array(element_wise_bounds[0])
-    else:
-      self.minimum = bounds[0]
-    if element_wise_bounds[1]:
-      self.maximum = np.array(element_wise_bounds[1])
-    else:
-      self.maximum = bounds[1]
+    def __init__(
+        self,
+        dtype: type,
+        shape: list[int],
+        bounds: tuple[Any, Any],
+        element_wise_bounds: tuple[Any, Any],
+        is_discrete: bool = False,
+    ):
+        """Constructor of ArraySpec."""
+        self.dtype = dtype
+        self.shape = shape
+        self.is_discrete = is_discrete
+        if element_wise_bounds[0]:
+            self.minimum = np.array(element_wise_bounds[0])
+        else:
+            self.minimum = bounds[0]
+        if element_wise_bounds[1]:
+            self.maximum = np.array(element_wise_bounds[1])
+        else:
+            self.maximum = bounds[1]
 
-  def __repr__(self) -> str:
-    """Beautify debug info."""
-    return (
-      f"ArraySpec(shape={self.shape}, dtype={self.dtype}, "
-      f"minimum={self.minimum}, maximum={self.maximum})"
-    )
+    def __repr__(self) -> str:
+        """Beautify debug info."""
+        return (
+            f"ArraySpec(shape={self.shape}, dtype={self.dtype}, "
+            f"minimum={self.minimum}, maximum={self.maximum})"
+        )
 
 
 class EnvPool(Protocol):
-  """Cpp PyEnvpool class interface."""
+    """Cpp PyEnvpool class interface."""
 
-  _state_keys: List[str]
-  _action_keys: List[str]
-  spec: Any
+    # Public task-to-slot metadata supplied by make_multitask.
+    task_ids: tuple[str, ...]
+    env_task_ids: tuple[str, ...]
 
-  def __init__(self, spec: EnvSpec):
-    """Constructor of EnvPool."""
+    _state_keys: list[str]
+    _state_names: list[str]
+    _action_keys: list[str]
+    _action_names: list[str]
+    _check_action_finished: bool
+    _all_env_ids: np.ndarray
+    _last_action_name: str
+    _last_action_type: Any
+    _last_players_env_id: np.ndarray
+    spec: Any
 
-  def __len__(self) -> int:
-    """Return the number of environments."""
+    def __init__(self, spec: EnvSpec):
+        """Constructor of EnvPool."""
 
-  @property
-  def _spec(self) -> EnvSpec:
-    """Cpp env spec."""
+    def __len__(self) -> int:
+        """Return the number of environments."""
 
-  @property
-  def _action_spec(self) -> List:
-    """Cpp action spec."""
+    @property
+    def _spec(self) -> EnvSpec:
+        """Cpp env spec."""
 
-  def _check_action(self, actions: List) -> None:
-    """Check action shapes."""
+    @property
+    def _action_spec(self) -> list:
+        """Cpp action spec."""
 
-  def _recv(self) -> List[np.ndarray]:
-    """Cpp private _recv method."""
+    def _check_action(self, actions: list) -> None:
+        """Check action shapes."""
 
-  def _send(self, action: List[np.ndarray]) -> None:
-    """Cpp private _send method."""
+    def _player_action_count(self, adict: dict[str, Any]) -> int | None:
+        """Infer the leading player-action dimension."""
 
-  def _reset(self, env_id: np.ndarray) -> None:
-    """Cpp private _reset method."""
+    def _cached_players_env_id(
+        self, env_id: np.ndarray, player_count: int
+    ) -> np.ndarray | None:
+        """Reuse cached player-to-env mapping when available."""
 
-  def _from(
-    self,
-    action: Union[Dict[str, Any], np.ndarray],
-    env_id: Optional[np.ndarray] = None,
-  ) -> List[np.ndarray]:
-    """Convertion for input action."""
+    def _infer_players_env_id(self, adict: dict[str, Any]) -> np.ndarray:
+        """Infer players.env_id for simplified multiplayer actions."""
 
-  def _to(
-    self,
-    state: List[np.ndarray],
-    reset: bool,
-    return_info: bool,
-  ) -> Union[TimeStep, Tuple]:
-    """A switch of to_dm and to_gym for output state."""
+    def _recv(self) -> list[np.ndarray]:
+        """Cpp private _recv method."""
 
-  @property
-  def all_env_ids(self) -> np.ndarray:
-    """All env_id in numpy ndarray with dtype=np.int32."""
+    def _send(self, action: list[np.ndarray]) -> None:
+        """Cpp private _send method."""
 
-  @property
-  def is_async(self) -> bool:
-    """Return if this env is in sync mode or async mode."""
+    def _reset(self, env_id: np.ndarray) -> None:
+        """Cpp private _reset method."""
 
-  @property
-  def observation_space(self) -> Union[gym.Space, Dict[str, Any]]:
-    """Gym observation space."""
+    def _render(
+        self,
+        env_ids: np.ndarray,
+        width: int,
+        height: int,
+        camera_id: int,
+    ) -> np.ndarray:
+        """Cpp private _render method."""
 
-  @property
-  def action_space(self) -> Union[gym.Space, Dict[str, Any]]:
-    """Gym action space."""
+    def _render_config(self) -> tuple[str | None, int, int, int, int]:
+        """Normalized render config."""
 
-  def observation_spec(self) -> Tuple:
-    """Dm observation spec."""
+    def _requires_windows_glfw_context(self) -> bool:
+        """Whether Windows-specific MuJoCo render bootstrapping is needed."""
 
-  def action_spec(self) -> Union[dm_env.specs.Array, Tuple]:
-    """Dm action spec."""
+    def _ensure_platform_render_context(self, width: int, height: int) -> None:
+        """Prepare any platform-specific GL context required before render."""
 
-  def seed(self, seed: Optional[Union[int, List[int]]] = None) -> None:
-    """Set the seed for all environments."""
+    def _show_human_frame(self, frame: np.ndarray) -> None:
+        """Display a rendered frame in a Python viewer."""
 
-  @property
-  def config(self) -> Dict[str, Any]:
-    """Envpool config."""
+    _render_window_name: str
+    _render_window_open: bool
 
-  def send(
-    self,
-    action: Union[Dict[str, Any], np.ndarray],
-    env_id: Optional[np.ndarray] = None,
-  ) -> None:
-    """Envpool send wrapper."""
+    def _from(
+        self,
+        action: dict[str, Any] | np.ndarray,
+        env_id: np.ndarray | None = None,
+    ) -> list[np.ndarray]:
+        """Convertion for input action."""
 
-  def recv(
-    self,
-    reset: bool = False,
-    return_info: bool = True,
-  ) -> Union[TimeStep, Tuple]:
-    """Envpool recv wrapper."""
+    def _to(
+        self,
+        state: list[np.ndarray],
+        reset: bool,
+        return_info: bool,
+    ) -> Any:
+        """A switch of to_dm and to_gym for output state."""
 
-  def async_reset(self) -> None:
-    """Envpool async reset interface."""
+    @property
+    def all_env_ids(self) -> np.ndarray:
+        """All env_id in numpy ndarray with dtype=np.int32."""
 
-  def step(
-    self,
-    action: Union[Dict[str, Any], np.ndarray],
-    env_id: Optional[np.ndarray] = None,
-  ) -> Union[TimeStep, Tuple]:
-    """Envpool step interface that performs send/recv."""
+    @property
+    def is_async(self) -> bool:
+        """Whether this environment pool runs asynchronously."""
 
-  def reset(
-    self,
-    env_id: Optional[np.ndarray] = None,
-  ) -> Union[TimeStep, Tuple]:
-    """Envpool reset interface."""
+    @property
+    def observation_space(self) -> Any:
+        """Gym observation space."""
 
-  def xla(self) -> Tuple[Any, Callable, Callable, Callable]:
-    """Get the xla functions."""
+    @property
+    def action_space(self) -> Any:
+        """Gym action space."""
+
+    def observation_spec(self) -> Any:
+        """Dm observation spec."""
+
+    def action_spec(self) -> Any:
+        """Dm action spec."""
+
+    def seed(self, seed: int | list[int] | None = None) -> None:
+        """Set the seed for all environments."""
+
+    @property
+    def config(self) -> dict[str, Any]:
+        """Envpool config."""
+
+    def send(
+        self,
+        action: ActionInput,
+        env_id: np.ndarray | None = None,
+    ) -> None:
+        """Envpool send wrapper."""
+
+    @overload
+    def recv(
+        self,
+        reset: Literal[False] = False,
+        return_info: bool = True,
+    ) -> Any: ...
+
+    @overload
+    def recv(
+        self,
+        reset: Literal[True],
+        return_info: bool = True,
+    ) -> Any: ...
+
+    def recv(
+        self,
+        reset: bool = False,
+        return_info: bool = True,
+    ) -> Any:
+        """Envpool recv wrapper."""
+
+    def async_reset(self) -> None:
+        """Envpool async reset interface."""
+
+    def step(
+        self,
+        action: ActionInput,
+        env_id: np.ndarray | None = None,
+    ) -> Any:
+        """Envpool step interface that performs send/recv."""
+
+    def reset(
+        self,
+        env_id: np.ndarray | None = None,
+    ) -> Any:
+        """Envpool reset interface."""
+
+    def render(
+        self,
+        env_ids: RenderEnvId = None,
+        camera_id: int | None = None,
+    ) -> np.ndarray | None:
+        """Render one or more envs."""
+
+    def close(self) -> None:
+        """Close the underlying environment."""
+
+    def xla(self) -> tuple[Any, Callable, Callable, Callable]:
+        """Get the xla functions."""
+
+
+class DMEnvPool(EnvPool, Protocol):
+    """dm_env-compatible EnvPool interface."""
+
+    def observation_spec(self) -> Any:
+        """Dm observation spec."""
+
+    def action_spec(self) -> Any:
+        """Dm action spec."""
+
+    def recv(
+        self,
+        reset: bool = False,
+        return_info: bool = True,
+    ) -> TimeStep:
+        """Recv a dm_env timestep."""
+
+    def step(
+        self,
+        action: ActionInput,
+        env_id: np.ndarray | None = None,
+    ) -> TimeStep:
+        """Step the dm_env-compatible envpool."""
+
+    def reset(
+        self,
+        env_id: np.ndarray | None = None,
+    ) -> TimeStep:
+        """Reset the dm_env-compatible envpool."""
+
+
+class GymnasiumEnvPool(EnvPool, Protocol):
+    """gymnasium-compatible EnvPool interface."""
+
+    @property
+    def num_envs(self) -> int:
+        """Number of sub-environments."""
+
+    @property
+    def is_vector_env(self) -> bool:
+        """Whether the EnvPool should be treated as vectorized."""
+
+    @property
+    def observation_space(self) -> Any:
+        """Gymnasium observation space."""
+
+    @property
+    def single_observation_space(self) -> Any:
+        """Gymnasium single sub-environment observation space."""
+
+    @property
+    def action_space(self) -> Any:
+        """Gymnasium action space."""
+
+    @property
+    def single_action_space(self) -> Any:
+        """Gymnasium single sub-environment action space."""
+
+    @overload
+    def recv(
+        self,
+        reset: Literal[False] = False,
+        return_info: bool = True,
+    ) -> GymnasiumStepReturn: ...
+
+    @overload
+    def recv(
+        self,
+        reset: Literal[True],
+        return_info: bool = True,
+    ) -> GymnasiumResetReturn: ...
+
+    @overload
+    def recv(
+        self,
+        reset: bool = False,
+        return_info: bool = True,
+    ) -> GymnasiumResetReturn | GymnasiumStepReturn: ...
+
+    def recv(
+        self,
+        reset: bool = False,
+        return_info: bool = True,
+    ) -> GymnasiumResetReturn | GymnasiumStepReturn:
+        """Recv a gymnasium observation/reset tuple."""
+
+    def step(
+        self,
+        action: ActionInput,
+        env_id: np.ndarray | None = None,
+    ) -> GymnasiumStepReturn:
+        """Step the gymnasium-compatible envpool."""
+
+    def reset(
+        self,
+        env_id: np.ndarray | None = None,
+        *,
+        seed: int | list[int] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> GymnasiumResetReturn:
+        """Reset the gymnasium-compatible envpool."""

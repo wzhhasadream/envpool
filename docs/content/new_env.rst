@@ -4,6 +4,8 @@ Add New Environment into EnvPool
 To add a new environment in C++ that EnvPool will parallelly run, we provide a
 developer interface in `envpool/core/env.h
 <https://github.com/sail-sg/envpool/blob/main/envpool/core/env.h>`_.
+The generated reference for the core headers used below is available in
+:doc:`cpp_interface`.
 
 - For a quick and annotated example, please refer to
   `envpool/dummy/ <https://github.com/sail-sg/envpool/tree/main/envpool/dummy>`_.
@@ -12,8 +14,8 @@ developer interface in `envpool/core/env.h
   a more complex, real example.
 
 In the following example, we will create an environment ``CartPole``.
-It is the same version as `OpenAI gym
-<https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py>`_.
+It follows the same CartPole dynamics as `Gymnasium
+<https://github.com/Farama-Foundation/Gymnasium/blob/main/gymnasium/envs/classic_control/cartpole.py>`_.
 
 The full implementation is in `Pull Request 25
 <https://github.com/sail-sg/envpool/pull/25/files>`_.
@@ -113,17 +115,17 @@ available to see on the python side:
     >>> import envpool
     >>> spec = envpool.make_spec("CartPole-v0")
     >>> spec
-    CartPoleEnvSpec(num_envs=1, batch_size=1, num_threads=0, max_num_players=1, thread_affinity_offset=-1, base_path='envpool', seed=42, gym_reset_return_info=False, max_episode_steps=200, reward_threshold=195.0)
+    CartPoleEnvSpec(num_envs=1, batch_size=1, num_threads=0, max_num_players=1, thread_affinity_offset=-1, base_path='envpool', seed=42, gym_reset_return_info=True, max_episode_steps=200, reward_threshold=195.0)
 
     >>> # if we change a config value
     >>> env = envpool.make_gym("CartPole-v0", reward_threshold=666)
     >>> env
-    CartPoleGymEnvPool(num_envs=1, batch_size=1, num_threads=0, max_num_players=1, thread_affinity_offset=-1, base_path='envpool', seed=42, gym_reset_return_info=True, max_episode_steps=200, reward_threshold=666.0)
+    CartPoleGymnasiumEnvPool(num_envs=1, batch_size=1, num_threads=0, max_num_players=1, thread_affinity_offset=-1, base_path='envpool', seed=42, gym_reset_return_info=True, max_episode_steps=200, reward_threshold=666.0)
 
-    >>> # observation space and action space
-    >>> env.observation_space
+    >>> # single-environment observation space and action space
+    >>> env.single_observation_space
     Box([-4.8000002e+00 -3.4028235e+38 -4.1887903e-01 -3.4028235e+38], [4.8000002e+00 3.4028235e+38 4.1887903e-01 3.4028235e+38], (4,), float32)
-    >>> env.action_space
+    >>> env.single_action_space
     Discrete(2)
     >>> env.spec.reward_threshold
     666.0
@@ -189,24 +191,19 @@ available to see on the python side:
 .. note ::
 
     EnvPool supports the environment that has multiple observations or even
-    nested observations. For example, ``FetchReach-v1``:
+    nested observations. For example, ``FetchReach-v4``:
 
     ::
 
-        >>> import gym
-        >>> env = gym.make("FetchReach-v1")
-        >>> e.observation_space
+        >>> import envpool
+        >>> env = envpool.make_gymnasium("FetchReach-v4", num_envs=1, seed=0)
+        >>> env.single_observation_space
         Dict(achieved_goal:Box([-inf ...], [inf ...], (3,), float32), desired_goal:Box([-inf ...], [inf ...], (3,), float32), observation:Box([-inf ...], [inf ...], (10,), float32))
-        >>> env.reset()
-        >>> env.step([0, 0, 0, 0])
-        ({'observation': array([ 1.34185919e+00,  7.49100661e-01,  5.34545376e-01,  0.00000000e+00,
-                  0.00000000e+00,  2.49364315e-05,  2.35502607e-07, -1.56066826e-04,
-                  3.22889321e-06, -1.55593223e-06]),
-          'achieved_goal': array([1.34185919, 0.74910066, 0.53454538]),
-          'desired_goal': array([1.36677977, 0.67090477, 0.60136475])},
-         -1.0,
-         False,
-         {'is_success': 0.0})
+        >>> obs, info = env.reset()
+        >>> obs["observation"].shape
+        (1, 10)
+        >>> obs["achieved_goal"].shape
+        (1, 3)
 
     If we want to create such a state spec (including both obs and info), here
     is the solution:
@@ -450,10 +447,10 @@ only a few lines to make it work:
 After that, you can import ``_CartPoleEnvSpec`` and ``_CartPoleEnvPool`` from
 ``classic_control_envpool.so``.
 
-The next step is to apply python-side wrapper (gym/dm_env APIs) to raw classes.
+The next step is to apply python-side wrapper (gymnasium/dm_env APIs) to raw classes.
 In ``envpool/classic_control/__init__.py``, use ``py_env`` function to
 instantiate ``CartPoleEnvSpec``, ``CartPoleDMEnvPool``,
-``CartPoleGymEnvPool`` and ``CartPoleGymnasiumEnvPool``.
+and ``CartPoleGymnasiumEnvPool``.
 
 ::
 
@@ -464,14 +461,12 @@ instantiate ``CartPoleEnvSpec``, ``CartPoleDMEnvPool``,
     (
       CartPoleEnvSpec,
       CartPoleDMEnvPool,
-      CartPoleGymEnvPool,
       CartPoleGymnasiumEnvPool,
     ) = py_env(_CartPoleEnvSpec, _CartPoleEnvPool)
 
     __all__ = [
       "CartPoleEnvSpec",
       "CartPoleDMEnvPool",
-      "CartPoleGymEnvPool",
       "CartPoleGymnasiumEnvPool",
     ]
 
@@ -490,7 +485,6 @@ To register a task in EnvPool, you need to call ``register`` function in
       import_path="envpool.classic_control",
       spec_cls="CartPoleEnvSpec",
       dm_cls="CartPoleDMEnvPool",
-      gym_cls="CartPoleGymEnvPool",
       gymnasium_cls="CartPoleGymnasiumEnvPool",
       max_episode_steps=200,
       reward_threshold=195.0,
@@ -501,14 +495,13 @@ To register a task in EnvPool, you need to call ``register`` function in
       import_path="envpool.classic_control",
       spec_cls="CartPoleEnvSpec",
       dm_cls="CartPoleDMEnvPool",
-      gym_cls="CartPoleGymEnvPool",
       gymnasium_cls="CartPoleGymnasiumEnvPool",
       max_episode_steps=500,
       reward_threshold=475.0,
     )
 
-``task_id``, ``import_path``, ``spec_cls``, ``dm_cls``, ``gym_cls`` and
-``gymnasium_cls`` are required arguments. Other arguments such as
+``task_id``, ``import_path``, ``spec_cls``, ``dm_cls`` and ``gymnasium_cls``
+are required arguments. Other arguments such as
 ``max_episode_steps`` and ``reward_threshold`` are env-specific. For example,
 if someone use ``envpool.make("CartPole-v1")``, the ``reward_threshold`` will
 be set to 475.0 at ``CartPoleEnvPool`` initialization.
@@ -716,10 +709,10 @@ If we want to add ``tianshou`` as a build dependency, in ``setup.cfg``:
 
     [options]
     packages = find:
-    python_requires = >=3.7
+    python_requires = >=3.11
     install_requires =
         dm-env>=1.4
-        gym>=0.18
+        gymnasium>=0.26
         numpy>=1.19
         types-protobuf>=3.17.3
         typing-extensions

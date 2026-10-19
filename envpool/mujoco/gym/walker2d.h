@@ -32,9 +32,13 @@ class Walker2dEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict(
-        "frame_skip"_.Bind(4), "post_constraint"_.Bind(true),
-        "ctrl_cost_weight"_.Bind(0.001), "terminate_when_unhealthy"_.Bind(true),
+        "frame_skip"_.Bind(4), "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+        "post_constraint"_.Bind(true), "ctrl_cost_weight"_.Bind(0.001),
+        "terminate_when_unhealthy"_.Bind(true),
         "exclude_current_positions_from_observation"_.Bind(true),
+        "legacy_healthy_reward"_.Bind(true),
+        "xml_file"_.Bind(std::string("walker2d.xml")),
+        "gymnasium_v5_render_camera"_.Bind(false),
         "forward_reward_weight"_.Bind(1.0), "healthy_reward"_.Bind(1.0),
         "healthy_z_min"_.Bind(0.8), "healthy_z_max"_.Bind(2.0),
         "healthy_angle_min"_.Bind(-1.0), "healthy_angle_max"_.Bind(1.0),
@@ -43,15 +47,19 @@ class Walker2dEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     bool no_pos = conf["exclude_current_positions_from_observation"_];
-    return MakeDict("obs"_.Bind(Spec<mjtNum>({no_pos ? 17 : 18}, {-inf, inf})),
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs"_.Bind(StackSpec(Spec<mjtNum>({no_pos ? 17 : 18}, {-inf, inf}),
+                              conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
-                    "info:qpos0"_.Bind(Spec<mjtNum>({9})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({9})),
+        "info:qpos0"_.Bind(Spec<mjtNum>({9})),
+        "info:qvel0"_.Bind(Spec<mjtNum>({9})),
 #endif
-                    "info:x_position"_.Bind(Spec<mjtNum>({-1})),
-                    "info:x_velocity"_.Bind(Spec<mjtNum>({-1})));
+        "info:x_position"_.Bind(Spec<mjtNum>({-1})),
+        "info:x_velocity"_.Bind(Spec<mjtNum>({-1})));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -60,10 +68,20 @@ class Walker2dEnvFns {
 };
 
 using Walker2dEnvSpec = EnvSpec<Walker2dEnvFns>;
+using Walker2dPixelEnvFns = PixelObservationEnvFns<Walker2dEnvFns>;
+using Walker2dPixelEnvSpec = EnvSpec<Walker2dPixelEnvFns>;
 
-class Walker2dEnv : public Env<Walker2dEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class Walker2dEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+  using Base::spec_;
+
   bool terminate_when_unhealthy_, no_pos_;
+  bool legacy_healthy_reward_;
+  bool gymnasium_v5_render_camera_;
   mjtNum ctrl_cost_weight_, forward_reward_weight_;
   mjtNum healthy_reward_, healthy_z_min_, healthy_z_max_;
   mjtNum healthy_angle_min_, healthy_angle_max_;
@@ -71,13 +89,24 @@ class Walker2dEnv : public Env<Walker2dEnvSpec>, public MujocoEnv {
   std::uniform_real_distribution<> dist_;
 
  public:
-  Walker2dEnv(const Spec& spec, int env_id)
-      : Env<Walker2dEnvSpec>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_] + "/mujoco/assets_gym/walker2d.xml",
-                  spec.config["frame_skip"_], spec.config["post_constraint"_],
-                  spec.config["max_episode_steps"_]),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  Walker2dEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
+        MujocoEnv(
+            std::string(spec.config["base_path"_]) + "/mujoco/assets_gym/" +
+                std::string(spec.config["xml_file"_]),
+            spec.config["frame_skip"_], spec.config["post_constraint"_],
+            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         terminate_when_unhealthy_(spec.config["terminate_when_unhealthy"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
+        legacy_healthy_reward_(spec.config["legacy_healthy_reward"_]),
+        gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
         forward_reward_weight_(spec.config["forward_reward_weight"_]),
         healthy_reward_(spec.config["healthy_reward"_]),
@@ -103,39 +132,65 @@ class Walker2dEnv : public Env<Walker2dEnvSpec>, public MujocoEnv {
 #endif
   }
 
+  bool RenderCamera(mjvCamera* camera) override {
+    if (!gymnasium_v5_render_camera_) {
+      return false;
+    }
+    camera->trackbodyid = 2;
+    camera->distance = 4.0;
+    camera->lookat[0] = 0.0;
+    camera->lookat[1] = 0.0;
+    camera->lookat[2] = 1.15;
+    camera->elevation = -20.0;
+    ApplyGymnasiumDefaultCameraId(camera);
+    return true;
+  }
+
   bool IsDone() override { return done_; }
 
   void Reset() override {
     done_ = false;
     elapsed_step_ = 0;
     MujocoReset();
-    WriteState(0.0, 0.0, 0.0);
+    WriteState(0.0, 0.0, 0.0, true);
   }
 
   void Step(const Action& action) override {
-    // step
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum x_before = data_->qpos[0];
-    MujocoStep(act);
-    mjtNum x_after = data_->qpos[0];
+    double reward_sum = 0.0;
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum x_before = data_->qpos[0];
+      MujocoStep(act);
+      mjtNum x_after = data_->qpos[0];
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+      // xv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (x_after - x_before) / dt;
+      // reward and done
+      bool is_healthy = IsHealthy();
+      bool give_healthy_reward = is_healthy;
+      if (legacy_healthy_reward_) {
+        give_healthy_reward = terminate_when_unhealthy_ || is_healthy;
+      }
+      mjtNum healthy_reward = give_healthy_reward ? healthy_reward_ : 0.0;
+      auto reward = static_cast<float>(xv * forward_reward_weight_ +
+                                       healthy_reward - ctrl_cost);
+      ++elapsed_step_;
+      done_ = (terminate_when_unhealthy_ ? !is_healthy : false) ||
+              (elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, x_after, false);
+        break;
+      }
     }
-    // xv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (x_after - x_before) / dt;
-    // reward and done
-    mjtNum healthy_reward =
-        terminate_when_unhealthy_ || IsHealthy() ? healthy_reward_ : 0.0;
-    auto reward = static_cast<float>(xv * forward_reward_weight_ +
-                                     healthy_reward - ctrl_cost);
-    ++elapsed_step_;
-    done_ = (terminate_when_unhealthy_ ? !IsHealthy() : false) ||
-            (elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, x_after);
   }
 
  private:
@@ -150,21 +205,30 @@ class Walker2dEnv : public Env<Walker2dEnvSpec>, public MujocoEnv {
     return true;
   }
 
-  void WriteState(float reward, mjtNum xv, mjtNum x_after) {
-    State state = Allocate();
+  void WriteState(float reward, mjtNum xv, mjtNum x_after, bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
-    mjtNum* obs = static_cast<mjtNum*>(state["obs"_].Data());
-    for (int i = no_pos_ ? 1 : 0; i < model_->nq; ++i) {
-      *(obs++) = data_->qpos[i];
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation(&obs_pixels, reset);
+    } else {
+      auto obs_state = state["obs"_];
+      mjtNum* obs = PrepareObservation(&obs_state);
+      for (int i = no_pos_ ? 1 : 0; i < model_->nq; ++i) {
+        *(obs++) = data_->qpos[i];
+      }
+      for (int i = 0; i < model_->nv; ++i) {
+        mjtNum x = data_->qvel[i];
+        x = std::min(velocity_max_, x);
+        x = std::max(velocity_min_, x);
+        *(obs++) = x;
+      }
+      CommitObservation(&obs_state, reset);
     }
-    for (int i = 0; i < model_->nv; ++i) {
-      mjtNum x = data_->qvel[i];
-      x = std::min(velocity_max_, x);
-      x = std::max(velocity_min_, x);
-      *(obs++) = x;
-    }
-    // info
     state["info:x_position"_] = x_after;
     state["info:x_velocity"_] = xv;
 #ifdef ENVPOOL_TEST
@@ -174,7 +238,10 @@ class Walker2dEnv : public Env<Walker2dEnvSpec>, public MujocoEnv {
   }
 };
 
+using Walker2dEnv = Walker2dEnvBase<Walker2dEnvSpec, false>;
+using Walker2dPixelEnv = Walker2dEnvBase<Walker2dPixelEnvSpec, true>;
 using Walker2dEnvPool = AsyncEnvPool<Walker2dEnv>;
+using Walker2dPixelEnvPool = AsyncEnvPool<Walker2dPixelEnv>;
 
 }  // namespace mujoco_gym
 

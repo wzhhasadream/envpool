@@ -16,70 +16,62 @@
 from envpool.python.api import py_env
 
 from .classic_control_envpool import (
-  _AcrobotEnvPool,
-  _AcrobotEnvSpec,
-  _CartPoleEnvPool,
-  _CartPoleEnvSpec,
-  _MountainCarContinuousEnvPool,
-  _MountainCarContinuousEnvSpec,
-  _MountainCarEnvPool,
-  _MountainCarEnvSpec,
-  _PendulumEnvPool,
-  _PendulumEnvSpec,
+    _AcrobotEnvPool,
+    _AcrobotEnvSpec,
+    _CartPoleEnvPool,
+    _CartPoleEnvSpec,
+    _MountainCarContinuousEnvPool,
+    _MountainCarContinuousEnvSpec,
+    _MountainCarEnvPool,
+    _MountainCarEnvSpec,
+    _PendulumEnvPool,
+    _PendulumEnvSpec,
 )
 
 (
-  CartPoleEnvSpec,
-  CartPoleDMEnvPool,
-  CartPoleGymEnvPool,
-  CartPoleGymnasiumEnvPool,
+    CartPoleEnvSpec,
+    CartPoleDMEnvPool,
+    CartPoleGymnasiumEnvPool,
 ) = py_env(_CartPoleEnvSpec, _CartPoleEnvPool)
 
 (
-  PendulumEnvSpec,
-  PendulumDMEnvPool,
-  PendulumGymEnvPool,
-  PendulumGymnasiumEnvPool,
+    PendulumEnvSpec,
+    PendulumDMEnvPool,
+    PendulumGymnasiumEnvPool,
 ) = py_env(_PendulumEnvSpec, _PendulumEnvPool)
 
 (
-  MountainCarEnvSpec,
-  MountainCarDMEnvPool,
-  MountainCarGymEnvPool,
-  MountainCarGymnasiumEnvPool,
+    MountainCarEnvSpec,
+    MountainCarDMEnvPool,
+    MountainCarGymnasiumEnvPool,
 ) = py_env(_MountainCarEnvSpec, _MountainCarEnvPool)
 
 (
-  MountainCarContinuousEnvSpec, MountainCarContinuousDMEnvPool,
-  MountainCarContinuousGymEnvPool, MountainCarContinuousGymnasiumEnvPool
+    MountainCarContinuousEnvSpec,
+    MountainCarContinuousDMEnvPool,
+    MountainCarContinuousGymnasiumEnvPool,
 ) = py_env(_MountainCarContinuousEnvSpec, _MountainCarContinuousEnvPool)
 
 (
-  AcrobotEnvSpec,
-  AcrobotDMEnvPool,
-  AcrobotGymEnvPool,
-  AcrobotGymnasiumEnvPool,
+    AcrobotEnvSpec,
+    AcrobotDMEnvPool,
+    AcrobotGymnasiumEnvPool,
 ) = py_env(_AcrobotEnvSpec, _AcrobotEnvPool)
 
 __all__ = [
-  "CartPoleEnvSpec",
-  "CartPoleDMEnvPool",
-  "CartPoleGymEnvPool",
-  "CartPoleGymnasiumEnvPool",
-  "PendulumEnvSpec",
-  "PendulumDMEnvPool",
-  "PendulumGymEnvPool",
-  "PendulumGymnasiumEnvPool",
-  "MountainCarEnvSpec",
-  "MountainCarDMEnvPool",
-  "MountainCarGymEnvPool",
-  "MountainCarGymnasiumEnvPool",
-  "MountainCarContinuousEnvSpec",
-  "MountainCarContinuousDMEnvPool",
-  "MountainCarContinuousGymEnvPool",
-  "MountainCarContinuousGymnasiumEnvPool",
-  "AcrobotEnvSpec",
-  "AcrobotDMEnvPool",
-  "AcrobotGymEnvPool",
-  "AcrobotGymnasiumEnvPool",
+    "CartPoleEnvSpec",
+    "CartPoleDMEnvPool",
+    "CartPoleGymnasiumEnvPool",
+    "PendulumEnvSpec",
+    "PendulumDMEnvPool",
+    "PendulumGymnasiumEnvPool",
+    "MountainCarEnvSpec",
+    "MountainCarDMEnvPool",
+    "MountainCarGymnasiumEnvPool",
+    "MountainCarContinuousEnvSpec",
+    "MountainCarContinuousDMEnvPool",
+    "MountainCarContinuousGymnasiumEnvPool",
+    "AcrobotEnvSpec",
+    "AcrobotDMEnvPool",
+    "AcrobotGymnasiumEnvPool",
 ]

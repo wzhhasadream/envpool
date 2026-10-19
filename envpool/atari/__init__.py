@@ -16,15 +16,28 @@
 
 from envpool.python.api import py_env
 
-from .atari_envpool import _AtariEnvPool, _AtariEnvSpec
-
-AtariEnvSpec, AtariDMEnvPool, AtariGymEnvPool, AtariGymnasiumEnvPool = py_env(
-  _AtariEnvSpec, _AtariEnvPool
+from .atari_envpool import (
+    _AtariContinuousEnvPool,
+    _AtariContinuousEnvSpec,
+    _AtariEnvPool,
+    _AtariEnvSpec,
 )
 
+AtariEnvSpec, AtariDMEnvPool, AtariGymnasiumEnvPool = py_env(
+    _AtariEnvSpec, _AtariEnvPool
+)
+
+(
+    AtariContinuousEnvSpec,
+    AtariContinuousDMEnvPool,
+    AtariContinuousGymnasiumEnvPool,
+) = py_env(_AtariContinuousEnvSpec, _AtariContinuousEnvPool)
+
 __all__ = [
-  "AtariEnvSpec",
-  "AtariDMEnvPool",
-  "AtariGymEnvPool",
-  "AtariGymnasiumEnvPool",
+    "AtariContinuousEnvSpec",
+    "AtariContinuousDMEnvPool",
+    "AtariContinuousGymnasiumEnvPool",
+    "AtariEnvSpec",
+    "AtariDMEnvPool",
+    "AtariGymnasiumEnvPool",
 ]

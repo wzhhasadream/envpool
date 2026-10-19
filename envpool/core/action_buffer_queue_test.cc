@@ -14,15 +14,17 @@
 
 #include "envpool/core/action_buffer_queue.h"
 
-#include <glog/logging.h>
 #include <gtest/gtest.h>
 
 #include <queue>
 #include <random>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "ThreadPool.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "envpool/core/dict.h"
 #include "envpool/core/spec.h"
 

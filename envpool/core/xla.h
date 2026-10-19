@@ -17,9 +17,9 @@
 #ifndef ENVPOOL_CORE_XLA_H_
 #define ENVPOOL_CORE_XLA_H_
 
-#include <cuda_runtime_api.h>
-
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "envpool/core/array.h"
+#include "envpool/core/cuda_driver.h"
+#include "envpool/core/dict.h"
 #include "envpool/core/xla_template.h"
 
 template <typename D>
@@ -37,12 +39,12 @@ template <typename... T>
 constexpr bool HasContainerType(std::tuple<T...> /*unused*/) {
   return (is_container_v<typename T::dtype> || ...);
 }
-bool HasDynamicDim(const std::vector<int>& shape) {
+inline bool HasDynamicDim(const std::vector<int>& shape) {
   return std::any_of(shape.begin() + 1, shape.end(),
                      [](int s) { return s == -1; });
 }
 template <typename... T>
-bool HasDynamicDim(const std::tuple<T...>& state_spec) {
+inline bool HasDynamicDim(const std::tuple<T...>& state_spec) {
   bool dyn = false;
   std::apply([&](auto&&... spec) { dyn = (HasDynamicDim(spec.shape) || ...); },
              state_spec);
@@ -64,7 +66,7 @@ Array CpuBufferToArray(const void* buffer, ::Spec<Dtype> spec, int batch_size,
 }
 
 template <typename Dtype>
-Array GpuBufferToArray(cudaStream_t stream, const void* buffer,
+Array GpuBufferToArray(EnvPoolGpuStream stream, const void* buffer,
                        ::Spec<Dtype> spec, int batch_size,
                        int max_num_players) {
   if (!spec.shape.empty() &&
@@ -74,8 +76,8 @@ Array GpuBufferToArray(cudaStream_t stream, const void* buffer,
     spec = spec.Batch(batch_size);
   }
   Array ret(spec);
-  cudaMemcpyAsync(ret.Data(), buffer, ret.size * ret.element_size,
-                  cudaMemcpyDeviceToHost, stream);
+  envpool::cuda_driver::Api().CopyDeviceToHostAsync(
+      ret.Data(), buffer, ret.size * ret.element_size, stream);
   return ret;
 }
 
@@ -146,7 +148,7 @@ struct XlaSend {
     envpool->Send(action);
   }
 
-  static void Gpu(EnvPool* envpool, cudaStream_t stream, const In& in,
+  static void Gpu(EnvPool* envpool, EnvPoolGpuStream stream, const In& in,
                   const Out& out) {
     std::vector<Array> action;
     action.reserve(std::tuple_size_v<typename EnvPool::Action::Keys>);
@@ -161,7 +163,7 @@ struct XlaSend {
            ...);
         },
         action_spec);
-    cudaStreamSynchronize(stream);
+    envpool::cuda_driver::Api().SynchronizeStream(stream);
     envpool->Send(action);
   }
 };
@@ -195,17 +197,17 @@ struct XlaRecv {
     }
   }
 
-  static void Gpu(EnvPool* envpool, cudaStream_t stream, const In& in,
+  static void Gpu(EnvPool* envpool, EnvPoolGpuStream stream, const In& in,
                   const Out& out) {
     int batch_size = envpool->spec.config["batch_size"_];
     int max_num_players = envpool->spec.config["max_num_players"_];
     std::vector<Array> recv = envpool->Recv();
     for (std::size_t i = 0; i < recv.size(); ++i) {
       CHECK_LE(recv[i].Shape(0), (std::size_t)batch_size * max_num_players);
-      cudaMemcpyAsync(out[i], recv[i].Data(),
-                      recv[i].size * recv[i].element_size,
-                      cudaMemcpyHostToDevice, stream);
+      envpool::cuda_driver::Api().CopyHostToDeviceAsync(
+          out[i], recv[i].Data(), recv[i].size * recv[i].element_size, stream);
     }
+    envpool::cuda_driver::Api().SynchronizeStream(stream);
   }
 };
 

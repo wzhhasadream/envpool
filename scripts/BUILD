@@ -1,0 +1,57 @@
+# Copyright 2026 Garena Online Private Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("//envpool:requirements.bzl", "requirement")
+load("//third_party/jumanji:oracle_requirements.bzl", "jumanji_oracle_requirement")
+
+py_binary(
+    name = "render_compare",
+    srcs = ["render_compare.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//envpool/jumanji",
+        "//envpool/jumanji:jumanji_registration",
+        "//envpool/mujoco:metaworld",
+        "//envpool/mujoco:metaworld_registration",
+        "//envpool/mujoco:playground",
+        "//envpool/mujoco:playground_registration",
+        "//envpool/python:glfw_context",
+        "@metaworld_assets//:metaworld_oracle",
+        "@mujoco_playground_source//:python",
+        requirement("etils"),
+        requirement("gymnasium"),
+        requirement("jax"),
+        requirement("imageio"),
+        requirement("mujoco"),
+        requirement("scipy"),
+        requirement("typing-extensions"),
+        jumanji_oracle_requirement("jax"),
+        jumanji_oracle_requirement("jumanji"),
+        jumanji_oracle_requirement("matplotlib"),
+        jumanji_oracle_requirement("numpy"),
+        jumanji_oracle_requirement("pillow"),
+        jumanji_oracle_requirement("requests"),
+    ],
+)
+
+py_test(
+    name = "prune_actions_caches_test",
+    srcs = [
+        "prune_actions_caches.py",
+        "prune_actions_caches_test.py",
+    ],
+    main = "prune_actions_caches_test.py",
+)

@@ -1,14 +1,36 @@
+# Copyright 2026 Garena Online Private Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 load("@envpool//third_party:common.bzl", "template_rule")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+config_setting(
+    name = "darwin",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
 
 cc_binary(
     name = "arithchk",
-    srcs = [
-        "gdtoa/arithchk.c",
-        "@glibc_version_header//:glibc_2_17",
-    ],
-    copts = [
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    srcs = ["gdtoa/arithchk.c"],
 )
 
 genrule(
@@ -16,6 +38,7 @@ genrule(
     srcs = [],
     outs = ["arith.h"],
     cmd = "$(execpath :arithchk) > $@",
+    cmd_bat = "$(execpath :arithchk) > $@",
     tools = [":arithchk"],
 )
 
@@ -24,10 +47,6 @@ cc_binary(
     srcs = [
         "gdtoa/qnan.c",
         ":arith.h",
-        "@glibc_version_header//:glibc_2_17",
-    ],
-    copts = [
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
     ],
 )
 
@@ -36,6 +55,7 @@ genrule(
     srcs = [],
     outs = ["gd_qnan.h"],
     cmd = "$(execpath :qnan) > $@",
+    cmd_bat = "$(execpath :qnan) > $@",
     tools = [":qnan"],
 )
 
@@ -47,15 +67,17 @@ cc_library(
         "gdtoa/misc.c",
         ":arith.h",
         ":gd_qnan.h",
-        "@glibc_version_header//:glibc_2_17",
     ],
     hdrs = glob(["gdtoa/*.h"]),
-    copts = [
-        "-Wall",
-        "-Wextra",
+    copts = select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-Wall",
+            "-Wextra",
+        ],
+    }) + [
         "-DINFNAN_CHECK",
         "-DMULTIPLE_THREADS",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
     ],
     strip_include_prefix = "gdtoa",
 )
@@ -70,18 +92,20 @@ cc_library(
         "bzip2/decompress.c",
         "bzip2/huffman.c",
         "bzip2/randtable.c",
-        "@glibc_version_header//:glibc_2_17",
     ],
     hdrs = glob([
         "bzip2/*.h",
     ]),
     copts = [
         "-DBZ_NO_STDIO",
-        "-Wall",
-        "-Wextra",
-        "-fomit-frame-pointer",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    ] + select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-Wall",
+            "-Wextra",
+            "-fomit-frame-pointer",
+        ],
+    }),
     strip_include_prefix = "bzip2",
 )
 
@@ -90,8 +114,8 @@ template_rule(
     src = "src/viz_version.h.in",
     out = "viz_version.h",
     substitutions = {
-        "@ViZDoom_VERSION_ID@": "1113",
-        "@ViZDoom_VERSION_STR@": "1.1.13",
+        "@ViZDoom_VERSION_ID@": "1300",
+        "@ViZDoom_VERSION_STR@": "1.3.0",
     },
 )
 
@@ -105,26 +129,27 @@ cc_library(
             "lzma/C/Threads.c",
             "lzma/C/LzFindMt.c",
         ],
-    ) + [
-        "@glibc_version_header//:glibc_2_17",
-    ],
-    hdrs = glob(
-        [
-            "lzma/C/*.h",
+    ) + select({
+        "@envpool//:windows": [
+            "lzma/C/LzFindMt.c",
+            "lzma/C/Threads.c",
         ],
-        exclude = [
-            "lzma/C/Threads.h",
-            "lzma/C/LzFindMt.h",
-        ],
-    ),
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "lzma/C/*.h",
+    ]),
     copts = [
-        "-D_7ZIP_ST",
-        "-Wall",
-        "-Wextra",
-        "-fomit-frame-pointer",
         "-D_7ZIP_PPMD_SUPPPORT",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    ] + select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-D_7ZIP_ST",
+            "-Wall",
+            "-Wextra",
+            "-fomit-frame-pointer",
+        ],
+    }),
     strip_include_prefix = "lzma/C",
 )
 
@@ -140,31 +165,27 @@ cc_binary(
         "tools/re2c/scanner.cc",
         "tools/re2c/substr.cc",
         "tools/re2c/translate.cc",
-        "@glibc_version_header//:glibc_2_17",
     ] + glob(["tools/re2c/*.h"]),
-    copts = [
-        "-DHAVE_CONFIG_H",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    copts = ["-DHAVE_CONFIG_H"],
 )
 
 cc_binary(
     name = "lemon",
-    srcs = [
-        "tools/lemon/lemon.c",
-        "@glibc_version_header//:glibc_2_17",
-    ],
-    copts = [
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    srcs = ["tools/lemon/lemon.c"],
 )
 
 genrule(
     name = "sc_man_scanner",
     srcs = ["src/sc_man_scanner.re"],
     outs = ["src/sc_man_scanner.h"],
-    cmd = "$(execpath re2c) --no-generation-date -s -o $@ $<",
-    tools = [":re2c"],
+    cmd = "$(execpath :re2c) --no-generation-date -s -o $@ " +
+          "$(location src/sc_man_scanner.re)",
+    cmd_bat = "$(execpath @re2c_4_5_1//:re2c) --no-generation-date " +
+              "-s -o $@ $(location src/sc_man_scanner.re)",
+    tools = select({
+        "@envpool//:windows": ["@re2c_4_5_1//:re2c"],
+        "//conditions:default": [":re2c"],
+    }),
 )
 
 genrule(
@@ -172,6 +193,7 @@ genrule(
     srcs = ["tools/lemon/lempar.c"],
     outs = ["lempar.c"],
     cmd = "cp $(SRCS) $(RULEDIR)",
+    cmd_bat = "copy /Y $(SRCS) $(RULEDIR)",
 )
 
 genrule(
@@ -179,6 +201,7 @@ genrule(
     srcs = ["src/xlat/xlat_parser.y"],
     outs = ["xlat_parser.y"],
     cmd = "cp $< $@",
+    cmd_bat = "copy /Y $< $@",
 )
 
 genrule(
@@ -188,9 +211,10 @@ genrule(
         "xlat_parser.c",
         "xlat_parser.h",
     ],
-    cmd = "$(execpath lemon) $<",
+    cmd = "$(execpath :lemon) $<",
+    cmd_bat = "$(execpath :lemon) $<",
     tools = [
-        "lemon",
+        ":lemon",
         ":lemon_deps",
         ":xlat_parser_y",
     ],
@@ -202,20 +226,21 @@ cc_library(
         "dumb/**/*.h",
         "dumb/**/*.c",
         "dumb/**/*.inc",
-    ]) + [
-        "@glibc_version_header//:glibc_2_17",
-    ],
+    ]),
     hdrs = glob([
         "dumb/include/*.h",
     ]),
     copts = [
         "-DNEED_ITOA=1",
-        "-Wall",
-        "-Wno-pointer-sign",
-        "-Wno-uninitialized",
-        "-Wno-unused-but-set-variable",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    ] + select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-Wall",
+            "-Wno-pointer-sign",
+            "-Wno-uninitialized",
+            "-Wno-unused-but-set-variable",
+        ],
+    }),
     includes = [
         "dumb/include",
     ],
@@ -226,18 +251,18 @@ cc_library(
     srcs = glob([
         "game-music-emu/gme/*.cpp",
         "game-music-emu/gme/*.h",
-    ]) + [
-        "@glibc_version_header//:glibc_2_17",
-    ],
+    ]),
     hdrs = [
         "game-music-emu/gme/gme.h",
     ],
-    copts = [
-        "-DLIBGME_VISIBILITY",
-        "-fvisibility=hidden",
-        "-fvisibility-inlines-hidden",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    copts = select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-DLIBGME_VISIBILITY",
+            "-fvisibility=hidden",
+            "-fvisibility-inlines-hidden",
+        ],
+    }),
     strip_include_prefix = "game-music-emu",
 )
 
@@ -331,28 +356,107 @@ cc_library(
         "src/*.h",
     ]) + [
         "src/oplsynth/fmopl.cpp",
-        "@glibc_version_header//:glibc_2_17",
     ],
-    copts = [
-        "-Dstricmp=strcasecmp",
-        "-Dstrnicmp=strncasecmp",
-        "-fno-tree-dominator-opts",
-        "-fno-tree-fre",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    copts = select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-Dstricmp=strcasecmp",
+            "-Dstrnicmp=strncasecmp",
+        ],
+    }) + select({
+        "@envpool//:windows": [],
+        ":darwin": [],
+        "//conditions:default": [
+            "-fno-tree-dominator-opts",
+            "-fno-tree-fre",
+        ],
+    }),
     includes = [
         "src",
     ],
+)
+
+genrule(
+    name = "iwadpicker_cocoa_o",
+    srcs = glob(["src/**"]) + [
+        ":viz_version",
+        "@sdl2//:srcs",
+    ],
+    outs = ["iwadpicker_cocoa.o"],
+    cmd = """
+generated_dir=$$(dirname "$(execpath :viz_version)")
+/usr/bin/xcrun --sdk macosx clang++ -c -x objective-c++ -std=c++17 \
+  -Dstricmp=strcasecmp \
+  -Dstrnicmp=strncasecmp \
+  -DNO_GTK=1 \
+  -DNO_FMOD=1 \
+  -DNO_OPENAL=1 \
+  -D__forceinline=inline \
+  -fPIC \
+  -fomit-frame-pointer \
+  -Iexternal/vizdoom/src \
+  -Iexternal/vizdoom/src/posix \
+  -Iexternal/vizdoom/src/posix/sdl \
+  -Iexternal/sdl2/include \
+  -I"$${generated_dir}" \
+  "$(location src/posix/osx/iwadpicker_cocoa.mm)" \
+  -o "$@"
+""",
+    target_compatible_with = select({
+        ":darwin": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+genrule(
+    name = "i_system_mm_o",
+    srcs = glob(["src/**"]) + [
+        ":viz_version",
+        "@sdl2//:srcs",
+    ],
+    outs = ["i_system.mm.o"],
+    cmd = """
+generated_dir=$$(dirname "$(execpath :viz_version)")
+/usr/bin/xcrun --sdk macosx clang++ -c -x objective-c++ -std=c++17 \
+  -Dstricmp=strcasecmp \
+  -Dstrnicmp=strncasecmp \
+  -DNO_GTK=1 \
+  -DNO_FMOD=1 \
+  -DNO_OPENAL=1 \
+  -D__forceinline=inline \
+  -fPIC \
+  -fomit-frame-pointer \
+  -Iexternal/vizdoom/src \
+  -Iexternal/vizdoom/src/posix \
+  -Iexternal/vizdoom/src/posix/sdl \
+  -Iexternal/sdl2/include \
+  -I"$${generated_dir}" \
+  "$(location src/posix/sdl/i_system.mm)" \
+  -o "$@"
+""",
+    target_compatible_with = select({
+        ":darwin": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "vizdoom_osx",
+    srcs = [
+        ":i_system_mm_o",
+        ":iwadpicker_cocoa_o",
+    ],
+    target_compatible_with = select({
+        ":darwin": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    alwayslink = 1,
 )
 
 cc_binary(
     name = "zipdir",
     srcs = [
         "tools/zipdir/zipdir.c",
-        "@glibc_version_header//:glibc_2_17",
-    ],
-    copts = [
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
     ],
     deps = [
         ":bzip2",
@@ -373,9 +477,66 @@ genrule(
     srcs = [":wadsrc"],
     outs = ["vizdoom.pk3"],
     cmd = "$(execpath zipdir) -udf $@ $<",
+    cmd_bat = "$(execpath zipdir) -udf $@ $<",
     tools = [":zipdir"],
     visibility = ["//visibility:public"],
 )
+
+_VIZDOOM_WINDOWS_SRCS = [
+    "src/win32/eaxedit.cpp",
+    "src/win32/fb_d3d9.cpp",
+    "src/win32/fb_d3d9_wipe.cpp",
+    "src/win32/fb_ddraw.cpp",
+    "src/win32/hardware.cpp",
+    "src/win32/helperthread.cpp",
+    "src/win32/i_cd.cpp",
+    "src/win32/i_crash.cpp",
+    "src/win32/i_dijoy.cpp",
+    "src/win32/i_input.cpp",
+    "src/win32/i_keyboard.cpp",
+    "src/win32/i_main.cpp",
+    "src/win32/i_mouse.cpp",
+    "src/win32/i_movie.cpp",
+    "src/win32/i_rawps2.cpp",
+    "src/win32/i_system.cpp",
+    "src/win32/i_xinput.cpp",
+    "src/win32/st_start.cpp",
+    "src/win32/win32video.cpp",
+]
+
+_VIZDOOM_POSIX_SRCS = [
+    "src/posix/i_cd.cpp",
+    "src/posix/i_movie.cpp",
+    "src/posix/i_steam.cpp",
+    "src/posix/sdl/crashcatcher.c",
+    "src/posix/sdl/hardware.cpp",
+    "src/posix/sdl/i_gui.cpp",
+    "src/posix/sdl/i_input.cpp",
+    "src/posix/sdl/i_joystick.cpp",
+    "src/posix/sdl/i_main.cpp",
+    "src/posix/sdl/i_system.cpp",
+    "src/posix/sdl/i_timer.cpp",
+    "src/posix/sdl/sdlvideo.cpp",
+    "src/posix/sdl/st_start.cpp",
+]
+
+_VIZDOOM_WINDOWS_LINKOPTS = [
+    "/SUBSYSTEM:WINDOWS",
+    "wsock32.lib",
+    "winmm.lib",
+    "dxguid.lib",
+    "dinput8.lib",
+    "ole32.lib",
+    "shell32.lib",
+    "user32.lib",
+    "gdi32.lib",
+    "comctl32.lib",
+    "comdlg32.lib",
+    "ws2_32.lib",
+    "setupapi.lib",
+    "oleaut32.lib",
+    "DelayImp.lib",
+]
 
 cc_binary(
     name = "vizdoom",
@@ -388,7 +549,6 @@ cc_binary(
         "src/__autostart.cpp",
         "src/actorptrselect.cpp",
         "src/am_map.cpp",
-        "src/asm_x86_64/tmap3.s",
         "src/b_bot.cpp",
         "src/b_func.cpp",
         "src/b_game.cpp",
@@ -520,7 +680,6 @@ cc_binary(
         "src/name.cpp",
         "src/nodebuild.cpp",
         "src/nodebuild_classify_nosse2.cpp",
-        "src/nodebuild_classify_sse2.cpp",
         "src/nodebuild_events.cpp",
         "src/nodebuild_extract.cpp",
         "src/nodebuild_gl.cpp",
@@ -576,19 +735,6 @@ cc_binary(
         "src/parsecontext.cpp",
         "src/pathexpander.cpp",
         "src/po_man.cpp",
-        "src/posix/i_cd.cpp",
-        "src/posix/i_movie.cpp",
-        "src/posix/i_steam.cpp",
-        "src/posix/sdl/crashcatcher.c",
-        "src/posix/sdl/hardware.cpp",
-        "src/posix/sdl/i_gui.cpp",
-        "src/posix/sdl/i_input.cpp",
-        "src/posix/sdl/i_joystick.cpp",
-        "src/posix/sdl/i_main.cpp",
-        "src/posix/sdl/i_system.cpp",
-        "src/posix/sdl/i_timer.cpp",
-        "src/posix/sdl/sdlvideo.cpp",
-        "src/posix/sdl/st_start.cpp",
         "src/r_3dfloors.cpp",
         "src/r_bsp.cpp",
         "src/r_data/colormaps.cpp",
@@ -725,35 +871,45 @@ cc_binary(
         "src/zzautozend.cpp",
         ":sc_man_scanner",
         ":viz_version",
-        "@glibc_version_header//:glibc_2_17",
-    ],
+    ] + select({
+        "@envpool//:windows": _VIZDOOM_WINDOWS_SRCS,
+        "//conditions:default": _VIZDOOM_POSIX_SRCS,
+    }),
     copts = [
-        "-Dstricmp=strcasecmp",
-        "-Dstrnicmp=strncasecmp",
         "-DNO_GTK=1",
         "-DNO_FMOD=1",
         "-DNO_OPENAL=1",
-        "-fPIC",
-        "-fomit-frame-pointer",
-        "-D__forceinline=inline",
-        "-Wno-unused-result",
-        "-Wall",
-        "-Wno-unused",
-        "-Wno-unused-parameter",
-        "-Wno-missing-field-initializers",
-        "-Wno-class-memaccess",
-        "-Wno-misleading-indentation",
-        "-Wno-implicit-fallthrough",
-        "-Wno-conversion-null",
-        "-Wno-deprecated-copy",
-        "-Wno-stringop-truncation",
-        "-Wno-cast-function-type",
         "-DBACKPATCH",
-        "-msse",
-        "-msse2",
-        "-mmmx",
-        "-include $(execpath @glibc_version_header//:glibc_2_17)",
-    ],
+    ] + select({
+        "@envpool//:windows": [],
+        "//conditions:default": [
+            "-Dstricmp=strcasecmp",
+            "-Dstrnicmp=strncasecmp",
+            "-fPIC",
+            "-fomit-frame-pointer",
+            "-D__forceinline=inline",
+            "-Wno-unused-result",
+            "-Wall",
+            "-Wno-unused",
+            "-Wno-unused-parameter",
+            "-Wno-missing-field-initializers",
+            "-Wno-class-memaccess",
+            "-Wno-misleading-indentation",
+            "-Wno-implicit-fallthrough",
+            "-Wno-conversion-null",
+            "-Wno-deprecated-copy",
+            "-Wno-stringop-truncation",
+            "-Wno-cast-function-type",
+        ],
+    }) + select({
+        "@envpool//:windows": [],
+        ":linux_x86_64": [
+            "-msse",
+            "-msse2",
+            "-mmmx",
+        ],
+        "//conditions:default": [],
+    }),
     data = [
         ":vizdoom_pk3",
     ],
@@ -764,18 +920,31 @@ cc_binary(
         "src/g_raven",
         "src/g_shared",
         "src/g_strife",
-        "src/posix",
-        "src/posix/sdl",
         "src/sound",
         "src/textures",
         "src/thingdef",
         "src/xlat",
-    ],
-    linkopts = [
-        "-lpthread",
-        "-lrt",
-        "-ldl",
-    ],
+    ] + select({
+        "@envpool//:windows": ["src/win32"],
+        "//conditions:default": [
+            "src/posix",
+            "src/posix/sdl",
+        ],
+    }),
+    linkopts = select({
+        ":darwin": [
+            "-framework Carbon",
+            "-framework Cocoa",
+            "-framework IOKit",
+            "-framework OpenGL",
+        ],
+        "@envpool//:windows": _VIZDOOM_WINDOWS_LINKOPTS,
+        "//conditions:default": [
+            "-lpthread",
+            "-lrt",
+            "-ldl",
+        ],
+    }),
     linkstatic = 1,
     visibility = ["//visibility:public"],
     deps = [
@@ -790,7 +959,12 @@ cc_binary(
         "@boost//:interprocess",
         "@boost//:thread",
         "@libjpeg_turbo//:jpeg",
-        "@sdl2",
         "@zlib",
-    ],
+    ] + select({
+        "@envpool//:windows": [],
+        "//conditions:default": ["@sdl2"],
+    }) + select({
+        ":darwin": [":vizdoom_osx"],
+        "//conditions:default": [],
+    }),
 )

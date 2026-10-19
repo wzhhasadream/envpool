@@ -56,22 +56,32 @@ std::string GetManipulatorXML(const std::string& base_path,
 class ManipulatorEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_skip"_.Bind(10),
+    return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("bring_ball")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
-    return MakeDict("obs:arm_pos"_.Bind(Spec<mjtNum>({8, 2})),
-                    "obs:arm_vel"_.Bind(Spec<mjtNum>({8})),
-                    "obs:touch"_.Bind(Spec<mjtNum>({5})),
-                    "obs:hand_pos"_.Bind(Spec<mjtNum>({4})),
-                    "obs:object_pos"_.Bind(Spec<mjtNum>({4})),
-                    "obs:object_vel"_.Bind(Spec<mjtNum>({3})),
-                    "obs:target_pos"_.Bind(Spec<mjtNum>({4}))
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
+    return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "obs:arm_pos"_.Bind(
+            StackSpec(Spec<mjtNum>({8, 2}), conf["frame_stack"_])),
+        "obs:arm_vel"_.Bind(StackSpec(Spec<mjtNum>({8}), conf["frame_stack"_])),
+        "obs:touch"_.Bind(StackSpec(Spec<mjtNum>({5}), conf["frame_stack"_])),
+        "obs:hand_pos"_.Bind(
+            StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
+        "obs:object_pos"_.Bind(
+            StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
+        "obs:object_vel"_.Bind(
+            StackSpec(Spec<mjtNum>({3}), conf["frame_stack"_])),
+        "obs:target_pos"_.Bind(
+            StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_]))
 #ifdef ENVPOOL_TEST
-                        ,
-                    "info:qpos0"_.Bind(Spec<mjtNum>({11})),
-                    "info:random_info"_.Bind(Spec<mjtNum>({8}))
+            ,
+        "info:qpos0"_.Bind(Spec<mjtNum>({11})),
+        "info:random_info"_.Bind(Spec<mjtNum>({8}))
 #endif
     );  // NOLINT
   }
@@ -82,9 +92,16 @@ class ManipulatorEnvFns {
 };
 
 using ManipulatorEnvSpec = EnvSpec<ManipulatorEnvFns>;
+using ManipulatorPixelEnvFns = PixelObservationEnvFns<ManipulatorEnvFns>;
+using ManipulatorPixelEnvSpec = EnvSpec<ManipulatorPixelEnvFns>;
 
-class ManipulatorEnv : public Env<ManipulatorEnvSpec>, public MujocoEnv {
+template <typename EnvSpecT, bool kFromPixels>
+class ManipulatorEnvBase : public Env<EnvSpecT>, public MujocoEnv {
  protected:
+  using Base = Env<EnvSpecT>;
+  using Base::Allocate;
+  using Base::gen_;
+
   const mjtNum kClose = 0.01;
   const mjtNum kPInHand = 0.1;
   const mjtNum kPInTarget = 0.1;
@@ -113,13 +130,21 @@ class ManipulatorEnv : public Env<ManipulatorEnvSpec>, public MujocoEnv {
   int id_site_peg_tip_, id_site_ball_, id_site_target_ball_;
 
  public:
-  ManipulatorEnv(const Spec& spec, int env_id)
-      : Env<ManipulatorEnvSpec>(spec, env_id),
+  using Spec = EnvSpecT;
+  using Action = typename Base::Action;
+
+  ManipulatorEnvBase(const Spec& spec, int env_id)
+      : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(spec.config["base_path"_],
                   GetManipulatorXML(spec.config["base_path"_],
                                     spec.config["task_name"_]),
-                  spec.config["frame_skip"_],
-                  spec.config["max_episode_steps"_]),
+                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+                  spec.config["frame_stack"_],
+                  RenderWidthOrDefault<kFromPixels>(spec.config),
+                  RenderHeightOrDefault<kFromPixels>(spec.config),
+                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
+                  spec.config["action_repeat"_],
+                  spec.config["friction_multiplier"_]),
         use_peg_(spec.config["task_name"_] == "bring_peg" ||
                  spec.config["task_name"_] == "insert_peg"),
         insert_(spec.config["task_name"_] == "insert_peg" ||
@@ -262,13 +287,13 @@ class ManipulatorEnv : public Env<ManipulatorEnvSpec>, public MujocoEnv {
 
   void Reset() override {
     ControlReset();
-    WriteState();
+    WriteState(true);
   }
 
   void Step(const Action& action) override {
-    mjtNum* act = static_cast<mjtNum*>(action["action"_].Data());
+    auto* act = static_cast<mjtNum*>(action["action"_].Data());
     ControlStep(act);
-    WriteState();
+    WriteState(false);
   }
 
   float TaskGetReward() override {
@@ -352,36 +377,58 @@ class ManipulatorEnv : public Env<ManipulatorEnvSpec>, public MujocoEnv {
     return IsClose(SiteDistance(id_site_ball_, id_site_target_ball_));
   }
 
-  void WriteState() {
-    const auto& bounded_joint_pos = BoundedJointPos();
-    const auto& joint_vel_arm = JointVelArm();
-    const auto& touch = Touch();
-    const auto& hand_pos = Body2dPose(id_xbody_hand_);
-    const auto& object_pos = Body2dPose(id_xbody_object_);
-    const auto& joint_vel_obj = JointVelObj();
-    const auto& target_pos = Body2dPose(id_xbody_target_);
-
-    State state = Allocate();
+  void WriteState(bool reset) {
+    auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
-    // obs
-    state["obs:arm_pos"_].Assign(bounded_joint_pos.begin(),
-                                 bounded_joint_pos.size());
-    state["obs:arm_vel"_].Assign(joint_vel_arm.begin(), joint_vel_arm.size());
-    state["obs:touch"_].Assign(touch.begin(), touch.size());
-    state["obs:hand_pos"_].Assign(hand_pos.begin(), hand_pos.size());
-    state["obs:object_pos"_].Assign(object_pos.begin(), object_pos.size());
-    state["obs:object_vel"_].Assign(joint_vel_obj.begin(),
-                                    joint_vel_obj.size());
-    state["obs:target_pos"_].Assign(target_pos.begin(), target_pos.size());
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    if constexpr (kFromPixels) {
+      auto obs_pixels = state["obs:pixels"_];
+      AssignPixelObservation("obs:pixels", &obs_pixels, reset);
+    } else {
+      const auto& bounded_joint_pos = BoundedJointPos();
+      const auto& joint_vel_arm = JointVelArm();
+      const auto& touch = Touch();
+      const auto& hand_pos = Body2dPose(id_xbody_hand_);
+      const auto& object_pos = Body2dPose(id_xbody_object_);
+      const auto& joint_vel_obj = JointVelObj();
+      const auto& target_pos = Body2dPose(id_xbody_target_);
+
+      auto obs_arm_pos = state["obs:arm_pos"_];
+      AssignObservation("obs:arm_pos", &obs_arm_pos, bounded_joint_pos.data(),
+                        bounded_joint_pos.size(), reset);
+      auto obs_arm_vel = state["obs:arm_vel"_];
+      AssignObservation("obs:arm_vel", &obs_arm_vel, joint_vel_arm.data(),
+                        joint_vel_arm.size(), reset);
+      auto obs_touch = state["obs:touch"_];
+      AssignObservation("obs:touch", &obs_touch, touch.data(), touch.size(),
+                        reset);
+      auto obs_hand_pos = state["obs:hand_pos"_];
+      AssignObservation("obs:hand_pos", &obs_hand_pos, hand_pos.data(),
+                        hand_pos.size(), reset);
+      auto obs_object_pos = state["obs:object_pos"_];
+      AssignObservation("obs:object_pos", &obs_object_pos, object_pos.data(),
+                        object_pos.size(), reset);
+      auto obs_object_vel = state["obs:object_vel"_];
+      AssignObservation("obs:object_vel", &obs_object_vel, joint_vel_obj.data(),
+                        joint_vel_obj.size(), reset);
+      auto obs_target_pos = state["obs:target_pos"_];
+      AssignObservation("obs:target_pos", &obs_target_pos, target_pos.data(),
+                        target_pos.size(), reset);
+    }
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.get(), model_->nq);
-    state["info:random_info"_].Assign(random_info_.begin(), 8);
+    state["info:random_info"_].Assign(random_info_.data(), 8);
 #endif
   }
 };
 
+using ManipulatorEnv = ManipulatorEnvBase<ManipulatorEnvSpec, false>;
+using ManipulatorPixelEnv = ManipulatorEnvBase<ManipulatorPixelEnvSpec, true>;
 using ManipulatorEnvPool = AsyncEnvPool<ManipulatorEnv>;
+using ManipulatorPixelEnvPool = AsyncEnvPool<ManipulatorPixelEnv>;
 
 }  // namespace mujoco_dmc
 
