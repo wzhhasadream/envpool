@@ -92,7 +92,7 @@ class _MujocoGymDeterministicTest(absltest.TestCase):
             self._assert_info_equal(info0, info1)
             differs = not np.allclose(obs0, obs2)
             for _ in range(total):
-                action = np.array([act_space.sample() for _ in range(num_envs)])
+                action = act_space.sample()
                 obs0, rew0, term0, trunc0, info0 = env0.step(action)
                 obs1, rew1, term1, trunc1, info1 = env1.step(action)
                 obs2, rew2, term2, trunc2, _ = env2.step(action)
@@ -136,13 +136,14 @@ class _MujocoGymDeterministicTest(absltest.TestCase):
         env = make_gym("HalfCheetah-v5", num_envs=1, seed=0, frame_stack=4)
         try:
             obs, _ = env.reset()
-            self.assertEqual(env.observation_space.shape, (4, 17))
+            self.assertEqual(env.single_observation_space.shape, (4, 17))
+            self.assertEqual(env.observation_space.shape, (1, 4, 17))
             self.assertEqual(obs.shape, (1, 4, 17))
             np.testing.assert_allclose(obs[0, 0], obs[0, 1])
             np.testing.assert_allclose(obs[0, 1], obs[0, 2])
             np.testing.assert_allclose(obs[0, 2], obs[0, 3])
 
-            action = np.zeros((1, *env.action_space.shape), dtype=np.float64)
+            action = np.zeros(env.action_space.shape, dtype=np.float64)
             next_obs = env.step(action)[0]
             self.assertEqual(next_obs.shape, (1, 4, 17))
             np.testing.assert_allclose(next_obs[0, :-1], obs[0, 1:])
@@ -171,7 +172,7 @@ class _MujocoGymDeterministicTest(absltest.TestCase):
             )
             np.testing.assert_allclose(obs0, obs1)
 
-            action = np.zeros((1, *env0.action_space.shape), dtype=np.float64)
+            action = np.zeros(env0.action_space.shape, dtype=np.float64)
             next_obs0 = env0.step(action)[0]
             next_obs1 = env1.step(action)[0]
             self.assertEqual(next_obs1.shape, next_obs0.shape)

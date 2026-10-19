@@ -1,6 +1,9 @@
 MetaWorld
 =========
 
+For native ``action_repeat`` configuration and stepping semantics, see
+:doc:`mujoco_action_repeat`.
+
 EnvPool provides native C++ implementations for the MetaWorld v3 Sawyer
 manipulation benchmark. The implementation is pinned to
 ``Farama-Foundation/Metaworld`` tag ``v3.0.0`` and exposes one EnvPool task ID

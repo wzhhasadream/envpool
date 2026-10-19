@@ -92,7 +92,7 @@ class _Box2dEnvPoolDeterministicTest(absltest.TestCase):
             self._assert_info_equal(info0, info1)
             differs = not np.allclose(obs0, obs2)
             for _ in range(total):
-                action = np.array([act_space.sample() for _ in range(num_envs)])
+                action = act_space.sample()
                 obs0, rew0, term0, trunc0, info0 = env0.step(action)
                 obs1, rew1, term1, trunc1, info1 = env1.step(action)
                 obs2, rew2, term2, trunc2, _ = env2.step(action)

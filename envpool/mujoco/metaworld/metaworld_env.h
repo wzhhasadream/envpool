@@ -24,12 +24,14 @@
 #include <initializer_list>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
+#include "envpool/mujoco/metaworld/action_utils.h"
 #include "envpool/mujoco/metaworld/tasks.h"
 #include "envpool/mujoco/robotics/mujoco_env.h"
 #include "envpool/mujoco/robotics/utils.h"
@@ -48,13 +50,51 @@ class MetaWorldEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("reward_threshold"_.Bind(10.0), "frame_skip"_.Bind(5),
-                    "frame_stack"_.Bind(1),
+                    "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
                     "task_name"_.Bind(std::string("reach-v3")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}),
                     "partially_observable"_.Bind(true));
   }
 
   template <typename Config>
+  static const TaskDef& Task(const Config& conf, int env_id) {
+    const auto& names = conf["env_task_names"_];
+    return GetTaskDef(names.empty() ? std::string(conf["task_name"_])
+                                    : names.at(env_id));
+  }
+
+  template <typename Config>
+  static int MaxEpisodeSteps(const Config& conf, int env_id) {
+    const auto& limits = conf["env_max_episode_steps"_];
+    return limits.empty() ? conf["max_episode_steps"_] : limits.at(env_id);
+  }
+
+  template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    if (conf["action_repeat"_] < 1) {
+      throw std::invalid_argument("action_repeat must be positive");
+    }
+    const auto& names = conf["env_task_names"_];
+    const auto& limits = conf["env_max_episode_steps"_];
+    const auto num_envs = static_cast<std::size_t>(conf["num_envs"_]);
+    if (!names.empty() && names.size() != num_envs) {
+      throw std::invalid_argument(
+          "env_task_names must contain exactly one task for each env");
+    }
+    if (!limits.empty() && limits.size() != num_envs) {
+      throw std::invalid_argument(
+          "env_max_episode_steps must contain exactly one limit for each env");
+    }
+    GetTaskDef(std::string(conf["task_name"_]));
+    for (const auto& name : names) {
+      GetTaskDef(name);
+    }
+    if (conf["max_episode_steps"_] <= 0 ||
+        std::any_of(limits.begin(), limits.end(),
+                    [](int limit) { return limit <= 0; })) {
+      throw std::invalid_argument("max_episode_steps must be positive");
+    }
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     return MakeDict("obs"_.Bind(StackSpec(Spec<mjtNum>({39}, {-inf, inf}),
                                           conf["frame_stack"_])),
@@ -65,6 +105,7 @@ class MetaWorldEnvFns {
                     "info:in_place_reward"_.Bind(Spec<mjtNum>({-1})),
                     "info:obj_to_target"_.Bind(Spec<mjtNum>({-1})),
                     "info:unscaled_reward"_.Bind(Spec<mjtNum>({-1})),
+                    "info:per_timestep_reward"_.Bind(Spec<mjtNum>({-1})),
 #ifdef ENVPOOL_TEST
                     "info:qpos0"_.Bind(Spec<mjtNum>({64})),
                     "info:qvel0"_.Bind(Spec<mjtNum>({64})),
@@ -159,15 +200,15 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
       : Env<EnvSpecT>(spec, env_id),
         gymnasium_robotics::MujocoRobotEnv(
             spec.config["base_path"_],
-            ModelPath(
-                spec.config["base_path"_],
-                GetTaskDef(std::string(spec.config["task_name"_])).xml_file),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            ModelPath(spec.config["base_path"_],
+                      MetaWorldEnvFns::Task(spec.config, env_id).xml_file),
+            spec.config["frame_skip"_],
+            MetaWorldEnvFns::MaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config)),
-        task_(GetTaskDef(std::string(spec.config["task_name"_]))),
+        task_(MetaWorldEnvFns::Task(spec.config, env_id)),
         task_index_(TaskIndex(task_.name)),
         partially_observable_(spec.config["partially_observable"_]) {
     target_pos_ = ToMjt(task_.init_goal);
@@ -189,23 +230,37 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
     ResetModel();
     CaptureResetState();
     prev_obs_ = CurrentObsNoGoal();
-    WriteState(ComputeReward({0.0, 0.0, 0.0, 0.0}), true);
+    const RewardInfo reward_info = ComputeReward({0.0, 0.0, 0.0, 0.0});
+    WriteState(reward_info.reward, reward_info, true);
   }
 
   void Step(const Action& action) override {
     const auto* raw = static_cast<float*>(action["action"_].Data());
     std::array<mjtNum, 4> act{raw[0], raw[1], raw[2], raw[3]};
-    SetXYZAction({act[0], act[1], act[2]});
-    if (model_->nu >= 2) {
-      data_->ctrl[0] = act[3];
-      data_->ctrl[1] = -act[3];
+    mjtNum reward = 0.0;
+    RewardInfo reward_info;
+    for (int i = 0; i < spec_.config["action_repeat"_]; ++i) {
+      // XYZ actions are relative mocap deltas, so reapply them each step.
+      SetXYZAction({act[0], act[1], act[2]});
+      if (model_->nu >= 2) {
+        data_->ctrl[0] = act[3];
+        data_->ctrl[1] = -act[3];
+      }
+      DoSimulation();
+      ++elapsed_step_;
+      done_ = elapsed_step_ >= max_episode_steps_;
+      PositionTargetSites();
+      mj_forward(model_, data_);
+      reward_info = ComputeReward(act);
+      reward += reward_info.reward;
+      if (done_ || i + 1 == spec_.config["action_repeat"_]) {
+        break;
+      }
+      // Task observation history advances at the original control rate;
+      // external frame stacks advance only when WriteState emits a state.
+      prev_obs_ = CurrentObsNoGoal();
     }
-    DoSimulation();
-    ++elapsed_step_;
-    done_ = elapsed_step_ >= max_episode_steps_;
-    PositionTargetSites();
-    mj_forward(model_, data_);
-    WriteState(ComputeReward(act), false);
+    WriteState(reward, reward_info, false);
   }
 
  protected:
@@ -704,7 +759,7 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
       return;
     }
     for (int i = 0; i < 3; ++i) {
-      mjtNum delta = std::clamp<mjtNum>(action[i], -1.0, 1.0) * 0.01;
+      const mjtNum delta = MocapActionDelta(static_cast<float>(action[i]));
       mjtNum value = data_->mocap_pos[3 * mocap_id_ + i] + delta;
       value = std::clamp<mjtNum>(value, task_.hand_low[i], task_.hand_high[i]);
       data_->mocap_pos[3 * mocap_id_ + i] = value;
@@ -2689,16 +2744,18 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
     }
   }
 
-  void WriteState(const RewardInfo& reward_info, bool reset) {
+  void WriteState(mjtNum reward, const RewardInfo& reward_info, bool reset) {
     auto state = Allocate();
-    state["reward"_] = static_cast<float>(reward_info.reward);
+    state["reward"_] = static_cast<float>(reward);
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
+    const auto curr = CurrentObsNoGoal();
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];
       AssignPixelObservation("obs:pixels", &obs_pixels, reset);
     } else {
       auto obs_state = state["obs"_];
       mjtNum* obs = PrepareObservation("obs", &obs_state);
-      auto curr = CurrentObsNoGoal();
       for (mjtNum value : curr) {
         *(obs++) = value;
       }
@@ -2712,8 +2769,8 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
         *(obs++) = value;
       }
       CommitObservation("obs", &obs_state, reset);
-      prev_obs_ = curr;
     }
+    prev_obs_ = curr;
     state["info:success"_] = reward_info.success;
     state["info:near_object"_] = reward_info.near_object;
     state["info:grasp_success"_] = reward_info.grasp_success;
@@ -2721,6 +2778,7 @@ class MetaWorldEnvBase : public Env<EnvSpecT>,
     state["info:in_place_reward"_] = reward_info.in_place_reward;
     state["info:obj_to_target"_] = reward_info.obj_to_target;
     state["info:unscaled_reward"_] = reward_info.reward;
+    state["info:per_timestep_reward"_] = reward_info.reward;
     state["info:task_id"_] = task_index_;
 #ifdef ENVPOOL_TEST
     state["info:qpos0"_].Assign(qpos0_.data(), qpos0_.size());

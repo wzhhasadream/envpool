@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("//envpool:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
@@ -164,5 +164,40 @@ py_library(
     imports = ["../.."],
     deps = [
         ":api",
+    ],
+)
+
+py_test(
+    name = "gymnasium_space_test",
+    srcs = ["gymnasium_space_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":gymnasium_envpool",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "gymnasium_space_native_test",
+    size = "large",
+    srcs = ["gymnasium_space_native_test.py"],
+    imports = ["../.."],
+    deps = [
+        "//envpool/atari:atari",
+        "//envpool/atari:atari_registration",
+        "//envpool/mujoco:metaworld",
+        "//envpool/mujoco:metaworld_registration",
+        "//envpool/mujoco:mujoco_dmc",
+        "//envpool/mujoco:mujoco_dmc_registration",
+        "//envpool/mujoco:mujoco_gym",
+        "//envpool/mujoco:mujoco_gym_registration",
+        "//envpool/mujoco:myosuite",
+        "//envpool/mujoco:myosuite_registration",
+        ":glfw_context",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
     ],
 )

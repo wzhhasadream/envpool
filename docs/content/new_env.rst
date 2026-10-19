@@ -122,10 +122,10 @@ available to see on the python side:
     >>> env
     CartPoleGymnasiumEnvPool(num_envs=1, batch_size=1, num_threads=0, max_num_players=1, thread_affinity_offset=-1, base_path='envpool', seed=42, gym_reset_return_info=True, max_episode_steps=200, reward_threshold=666.0)
 
-    >>> # observation space and action space
-    >>> env.observation_space
+    >>> # single-environment observation space and action space
+    >>> env.single_observation_space
     Box([-4.8000002e+00 -3.4028235e+38 -4.1887903e-01 -3.4028235e+38], [4.8000002e+00 3.4028235e+38 4.1887903e-01 3.4028235e+38], (4,), float32)
-    >>> env.action_space
+    >>> env.single_action_space
     Discrete(2)
     >>> env.spec.reward_threshold
     666.0
@@ -197,7 +197,7 @@ available to see on the python side:
 
         >>> import envpool
         >>> env = envpool.make_gymnasium("FetchReach-v4", num_envs=1, seed=0)
-        >>> env.observation_space
+        >>> env.single_observation_space
         Dict(achieved_goal:Box([-inf ...], [inf ...], (3,), float32), desired_goal:Box([-inf ...], [inf ...], (3,), float32), observation:Box([-inf ...], [inf ...], (10,), float32))
         >>> obs, info = env.reset()
         >>> obs["observation"].shape

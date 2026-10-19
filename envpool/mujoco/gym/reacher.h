@@ -33,9 +33,10 @@ class ReacherEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict(
         "reward_threshold"_.Bind(-3.75), "frame_skip"_.Bind(2),
-        "frame_stack"_.Bind(1), "post_constraint"_.Bind(true),
-        "ctrl_cost_weight"_.Bind(1.0), "reward_after_step"_.Bind(false),
-        "obs_include_z_distance"_.Bind(true), "dist_cost_weight"_.Bind(1.0),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+        "post_constraint"_.Bind(true), "ctrl_cost_weight"_.Bind(1.0),
+        "reward_after_step"_.Bind(false), "obs_include_z_distance"_.Bind(true),
+        "dist_cost_weight"_.Bind(1.0),
         "xml_file"_.Bind(std::string("reacher.xml")),
         "gymnasium_v5_render_camera"_.Bind(false),
         "reset_qpos_scale"_.Bind(0.1), "reset_qvel_scale"_.Bind(0.005),
@@ -43,8 +44,10 @@ class ReacherEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
         "obs"_.Bind(
             StackSpec(Spec<mjtNum>({conf["obs_include_z_distance"_] ? 11 : 10},
                                    {-inf, inf}),
@@ -93,7 +96,8 @@ class ReacherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["max_episode_steps"_], spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         id_fingertip_(mj_name2id(model_, mjOBJ_XBODY, "fingertip")),
         id_target_(mj_name2id(model_, mjOBJ_XBODY, "target")),
         reward_after_step_(spec.config["reward_after_step"_]),
@@ -151,31 +155,39 @@ class ReacherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   }
 
   void Step(const Action& action) override {
-    // step
+    double reward_sum = 0.0;
     auto* act = static_cast<mjtNum*>(action["action"_].Data());
-    std::array<mjtNum, 3> dist = {0.0, 0.0, 0.0};
-    if (!reward_after_step_) {
-      dist = GetDist();
-    }
-    MujocoStep(act);
-    if (reward_after_step_) {
-      dist = GetDist();
-    }
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      std::array<mjtNum, 3> dist = {0.0, 0.0, 0.0};
+      if (!reward_after_step_) {
+        dist = GetDist();
+      }
+      MujocoStep(act);
+      if (reward_after_step_) {
+        dist = GetDist();
+      }
 
-    // dist_cost
-    mjtNum dist_cost =
-        dist_cost_weight_ *
-        std::sqrt(dist[0] * dist[0] + dist[1] * dist[1] + dist[2] * dist[2]);
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
-    }
+      // dist_cost
+      mjtNum dist_cost =
+          dist_cost_weight_ *
+          std::sqrt(dist[0] * dist[0] + dist[1] * dist[1] + dist[2] * dist[2]);
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
 
-    // reward and done
-    auto reward = static_cast<float>(-dist_cost - ctrl_cost);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, ctrl_cost, dist_cost, false);
+      // reward and done
+      auto reward = static_cast<float>(-dist_cost - ctrl_cost);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), ctrl_cost, dist_cost, false);
+        break;
+      }
+    }
   }
 
  private:
@@ -191,6 +203,9 @@ class ReacherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
                   bool reset) {
     auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];

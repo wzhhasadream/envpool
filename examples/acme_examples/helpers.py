@@ -337,7 +337,11 @@ class BatchEnvWrapper(dm_env.Environment):
 
     def observation_spec(self):
         """Return the observation spec."""
-        space = self._environment.observation_space
+        space = (
+            self._environment.single_observation_space
+            if self._use_env_pool
+            else self._environment.observation_space
+        )
         obs_spec = specs.BoundedArray(
             shape=space.shape,
             dtype="float32",
@@ -349,7 +353,11 @@ class BatchEnvWrapper(dm_env.Environment):
 
     def action_spec(self):
         """Return the action spec."""
-        space = self._environment.action_space
+        space = (
+            self._environment.single_action_space
+            if self._use_env_pool
+            else self._environment.action_space
+        )
         if isinstance(space, gym.spaces.Discrete):
             act_spec = specs.DiscreteArray(
                 num_values=space.n, dtype=space.dtype, name="action"

@@ -25,6 +25,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,60 @@ namespace mujoco_dmc {
 
 bool DogHasBall(const std::string& task_name) { return task_name == "fetch"; }
 
+// Stable domain indices, independent of the tasks/order chosen for a pool.
+int DogTaskIndex(const std::string& task_name) {
+  static const std::array<std::string, 5> names = {"fetch", "run", "stand",
+                                                   "trot", "walk"};
+  auto found = std::find(names.begin(), names.end(), task_name);
+  if (found == names.end()) {
+    throw std::invalid_argument("Unknown task_name " + task_name +
+                                " for dmc dog.");
+  }
+  return static_cast<int>(found - names.begin());
+}
+
+template <typename Config>
+void ValidateDogTasks(const Config& config) {
+  DogTaskIndex(config["task_name"_]);
+  const auto& tasks = config["env_task_names"_];
+  const auto& horizons = config["env_max_episode_steps"_];
+  const auto count = static_cast<std::size_t>(config["num_envs"_]);
+  if (!tasks.empty() && tasks.size() != count) {
+    throw std::invalid_argument(
+        "env_task_names must contain one task for each env");
+  }
+  if (!horizons.empty() && horizons.size() != count) {
+    throw std::invalid_argument(
+        "env_max_episode_steps must contain one horizon for each env");
+  }
+  for (const auto& task : tasks) {
+    DogTaskIndex(task);
+    // Fetch adds a free ball joint. Even its legacy padded observation keys
+    // do not make it model-compatible with the four locomotion tasks.
+    if (DogHasBall(task) != DogHasBall(config["task_name"_])) {
+      throw std::invalid_argument(
+          "Dog fetch cannot share a multitask pool with locomotion tasks");
+    }
+  }
+  for (int horizon : horizons) {
+    if (horizon <= 0) {
+      throw std::invalid_argument("env_max_episode_steps must be positive");
+    }
+  }
+}
+
+template <typename Config>
+const std::string& DogTaskName(const Config& config, int env_id) {
+  const auto& tasks = config["env_task_names"_];
+  return tasks.empty() ? config["task_name"_] : tasks.at(env_id);
+}
+
+template <typename Config>
+int DogMaxEpisodeSteps(const Config& config, int env_id) {
+  const auto& horizons = config["env_max_episode_steps"_];
+  return horizons.empty() ? config["max_episode_steps"_] : horizons.at(env_id);
+}
+
 std::string GetDogXML(const std::string& base_path,
                       const std::string& task_name) {
   return XMLMakeDog(GetFileContent(base_path, "dog.xml"), task_name);
@@ -46,13 +101,21 @@ class DogEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(3), "frame_stack"_.Bind(1),
-                    "task_name"_.Bind(std::string("stand")));
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
+                    "task_name"_.Bind(std::string("stand")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDogTasks(conf);
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     [[maybe_unused]] int qpos_size = DogHasBall(conf["task_name"_]) ? 87 : 80;
     [[maybe_unused]] int qvel_size = DogHasBall(conf["task_name"_]) ? 85 : 79;
-    return MakeDict("obs:joint_angles"_.Bind(
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "info:task_id"_.Bind(Spec<int>({-1}, {0, 4})),
+                    "obs:joint_angles"_.Bind(
                         StackSpec(Spec<mjtNum>({73}), conf["frame_stack"_])),
                     "obs:joint_velocites"_.Bind(
                         StackSpec(Spec<mjtNum>({73}), conf["frame_stack"_])),
@@ -105,6 +168,7 @@ class DogEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   static constexpr mjtNum kTrotSpeed = 3.0;
   static constexpr mjtNum kRunSpeed = 9.0;
 
+  int task_index_;
   bool is_fetch_;
   mjtNum move_speed_;
   std::array<mjtNum, 2> stand_height_{};
@@ -137,6 +201,8 @@ class DogEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   std::array<mjtNum, 38> act0_{};
 #endif
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
@@ -145,13 +211,16 @@ class DogEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetDogXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetDogXML(spec.config["base_path"_],
+                      DogTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DogMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
-        is_fetch_(spec.config["task_name"_] == "fetch"),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DogTaskIndex(DogTaskName(spec.config, env_id))),
+        is_fetch_(DogHasBall(DogTaskName(spec.config, env_id))),
         id_root_qpos_(GetQposId(model_, "root")),
         id_root_qvel_(GetQvelId(model_, "root")),
         id_torso_body_(mj_name2id(model_, mjOBJ_BODY, "torso")),
@@ -173,7 +242,7 @@ class DogEnvBase : public Env<EnvSpecT>, public MujocoEnv {
 #ifdef ENVPOOL_TEST
     qvel0_.resize(model_->nv);
 #endif
-    const std::string& task_name = spec.config["task_name"_];
+    const std::string& task_name = DogTaskName(spec.config, env_id);
     if (task_name == "stand" || task_name == "fetch") {
       move_speed_ = 0.0;
     } else if (task_name == "walk") {
@@ -492,7 +561,11 @@ class DogEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   void WriteState(bool reset) {
     auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];
       AssignPixelObservation("obs:pixels", &obs_pixels, reset);

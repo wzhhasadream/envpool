@@ -13,10 +13,12 @@
 # limitations under the License.
 
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@python_versions//3.12:defs.bzl", py_binary_312 = "py_binary")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("//envpool:requirements.bzl", "requirement")
 load("//third_party:common.bzl", "copy_to_directory")
+load("//third_party/ale:oracle_requirements.bzl", "oracle_requirement")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -53,7 +55,11 @@ py_library(
 
 cc_library(
     name = "atari_env",
-    hdrs = ["atari_env.h"],
+    hdrs = [
+        "atari_env.h",
+        "continuous_action.h",
+        "task_catalog.h",
+    ],
     data = [
         ":gen_atari_roms",
     ],
@@ -169,5 +175,80 @@ py_test(
         requirement("tianshou"),
         requirement("tqdm"),
         requirement("torch"),
+    ],
+)
+
+py_test(
+    name = "atari_multitask_test",
+    size = "enormous",
+    srcs = ["atari_multitask_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":atari",
+        ":atari_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "atari_continuous_test",
+    size = "enormous",
+    srcs = ["atari_continuous_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":atari",
+        ":atari_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_binary_312(
+    name = "atari_continuous_oracle_probe",
+    srcs = ["atari_continuous_oracle_probe.py"],
+    deps = [
+        oracle_requirement("ale-py"),
+        oracle_requirement("gymnasium"),
+        oracle_requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "atari_continuous_align_test",
+    size = "enormous",
+    srcs = ["atari_continuous_align_test.py"],
+    data = [":atari_continuous_oracle_probe"],
+    imports = ["../.."],
+    deps = [
+        ":atari",
+        ":atari_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "continuous_api_test",
+    srcs = ["continuous_api_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":atari",
+        ":atari_registration",
+        requirement("numpy"),
+        requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "atari_continuous_xla_test",
+    srcs = ["atari_continuous_xla_test.py"],
+    imports = ["../.."],
+    deps = [
+        ":atari",
+        ":atari_registration",
+        requirement("numpy"),
+        requirement("jax"),
+        requirement("absl-py"),
     ],
 )

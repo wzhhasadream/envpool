@@ -76,6 +76,7 @@ stable version through `envpool.readthedocs.io/en/stable/
    content/slides
    content/build
    content/python_interface
+   content/gymnasium_wrappers
    content/cpp_interface
    content/xla_interface
    content/benchmark
@@ -91,6 +92,8 @@ stable version through `envpool.readthedocs.io/en/stable/
    env/box2d
    env/classic_control
    env/dm_control
+   env/mujoco_action_repeat
+   env/multitask
    env/gfootball
    env/highway
    env/humanoid_bench

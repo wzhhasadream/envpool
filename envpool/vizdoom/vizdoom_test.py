@@ -95,10 +95,10 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
                 img_height=height,
             )
         ) as env:
-            assert env.action_space.n == 6
+            assert env.single_action_space.n == 6
             obs, _ = env.reset()
             obs = obs.transpose(0, 2, 3, 1)
-            action_num = env.action_space.n
+            action_num = env.single_action_space.n
             env_id = np.arange(num_envs)
             np.random.seed(0)
             for t in range(step):
@@ -126,17 +126,17 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
         with self._managed_env(
             make_gym("D3Battle-v1", use_combined_action=True)
         ) as env:
-            action_num = env.action_space.n
+            action_num = env.single_action_space.n
         with self._managed_env(
             make_gym("D3Battle-v1", use_combined_action=True, force_speed=True)
         ) as env:
-            assert env.action_space.n * 2 == action_num
+            assert env.single_action_space.n * 2 == action_num
 
     def test_delta_action_space(self) -> None:
         with self._managed_env(
             make_gym("Deathmatch-v1", use_combined_action=True)
         ) as env:
-            action_num = env.action_space.n
+            action_num = env.single_action_space.n
         with self._managed_env(
             make_gym(
                 "Deathmatch-v1",
@@ -146,7 +146,7 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
                 },
             )
         ) as env:
-            assert env.action_space.n == 11 * action_num
+            assert env.single_action_space.n == 11 * action_num
         with self._managed_env(
             make_gym(
                 "Deathmatch-v1",
@@ -157,7 +157,7 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
                 },
             )
         ) as env:
-            assert env.action_space.n == 121 * action_num
+            assert env.single_action_space.n == 121 * action_num
         with self._managed_env(
             make_gym(
                 "Deathmatch-v1",
@@ -168,7 +168,7 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
                 },
             )
         ) as env:
-            assert env.action_space.shape[0] == 20
+            assert env.single_action_space.shape[0] == 20
 
     def test_obs_space(self) -> None:
         with self._managed_env(
@@ -226,7 +226,7 @@ class _VizdoomEnvPoolBasicTest(absltest.TestCase):
             baseline_value = None
             changed_value = None
 
-            for candidate in range(env.action_space.n):
+            for candidate in range(env.single_action_space.n):
                 _, baseline_info = env.reset()
                 for _ in range(64):
                     _, _, terminated, truncated, info = env.step(

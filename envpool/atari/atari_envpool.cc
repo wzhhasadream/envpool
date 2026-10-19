@@ -12,10 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <array>
+#include <utility>
+
 #include "envpool/atari/atari_env.h"
 #include "envpool/core/py_envpool.h"
 
 using AtariEnvSpec = PyEnvSpec<atari::AtariEnvSpec>;
 using AtariEnvPool = PyEnvPool<atari::AtariEnvPool>;
 
-PYBIND11_MODULE(atari_envpool, m) { REGISTER(m, AtariEnvSpec, AtariEnvPool) }
+using AtariContinuousEnvSpec = PyEnvSpec<atari::AtariContinuousEnvSpec>;
+using AtariContinuousEnvPool = PyEnvPool<atari::AtariContinuousEnvPool>;
+
+PYBIND11_MODULE(atari_envpool, m) {
+  REGISTER(m, AtariEnvSpec, AtariEnvPool)
+  REGISTER(m, AtariContinuousEnvSpec, AtariContinuousEnvPool)
+  m.def("_continuous_action", [](const std::array<float, 3>& action,
+                                 float threshold) {
+    atari::ValidateContinuousAction(action.data());
+    if (!std::isfinite(threshold)) {
+      throw std::invalid_argument("continuous_action_threshold must be finite");
+    }
+    auto converted = atari::ConvertContinuousAction(action.data(), threshold);
+    return std::make_pair(converted.action, converted.paddle_strength);
+  });
+}

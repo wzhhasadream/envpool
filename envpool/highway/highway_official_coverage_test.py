@@ -194,10 +194,10 @@ class _HighwayOfficialCoverageTest(absltest.TestCase):
                 try:
                     _assert_space_compatible(
                         self,
-                        env.observation_space,
+                        env.single_observation_space,
                         oracle.observation_space,
                     )
-                    action = _envpool_action(case, env.action_space)
+                    action = _envpool_action(case, env.single_action_space)
                     obs, _ = env.reset()
                     self.assertIsNotNone(obs)
                     frames = []
@@ -246,7 +246,7 @@ class _HighwayOfficialCoverageTest(absltest.TestCase):
                         _render_rgb(env0)[0], _render_rgb(env1)[0]
                     )
 
-                    action = _envpool_action(case, env0.action_space)
+                    action = _envpool_action(case, env0.single_action_space)
                     for _ in range(_COVERAGE_DETERMINISTIC_STEPS):
                         step0 = _envpool_step(env0, case, action)
                         step1 = _envpool_step(env1, case, action)

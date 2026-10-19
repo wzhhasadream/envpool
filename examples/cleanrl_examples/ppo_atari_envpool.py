@@ -209,7 +209,9 @@ class RecordEpisodeStatistics(gym.Wrapper):
     def __init__(self, env, deque_size=100):
         """Initialize episode statistics tracking."""
         super(RecordEpisodeStatistics, self).__init__(env)
-        self.num_envs = getattr(env, "num_envs", 1)
+        self.num_envs = env.num_envs
+        self.single_action_space = env.single_action_space
+        self.single_observation_space = env.single_observation_space
         self.episode_returns = None
         self.episode_lengths = None
         # get if the env has lives
@@ -351,11 +353,8 @@ if __name__ == "__main__":
         episodic_life=True,
         reward_clip=True,
     )
-    envs.num_envs = args.num_envs
-    envs.single_action_space = envs.action_space
-    envs.single_observation_space = envs.observation_space
     envs = RecordEpisodeStatistics(envs)
-    assert isinstance(envs.action_space, gym.spaces.Discrete), (
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), (
         "only discrete action space is supported"
     )
 

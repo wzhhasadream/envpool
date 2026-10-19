@@ -333,10 +333,12 @@ class _MiniGridEnvPoolAlignTest(absltest.TestCase):
         env1 = make_gymnasium(task_id, num_envs=1, seed=0, **kwargs)
         obs_space0 = cast(Any, env0.observation_space)
         self.check_spec(
-            obs_space0["direction"], env1.observation_space["direction"]
+            obs_space0["direction"], env1.single_observation_space["direction"]
         )
-        self.check_spec(obs_space0["image"], env1.observation_space["image"])
-        self.check_spec(env0.action_space, env1.action_space)
+        self.check_spec(
+            obs_space0["image"], env1.single_observation_space["image"]
+        )
+        self.check_spec(env0.action_space, env1.single_action_space)
 
         obs1_reset, info1_reset = env1.reset()
         obs0_reset, _ = env0.reset(seed=0)

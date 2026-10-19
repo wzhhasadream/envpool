@@ -33,9 +33,9 @@ class PusherEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict(
         "reward_threshold"_.Bind(0.0), "frame_skip"_.Bind(5),
-        "frame_stack"_.Bind(1), "post_constraint"_.Bind(true),
-        "ctrl_cost_weight"_.Bind(0.1), "dist_cost_weight"_.Bind(1.0),
-        "near_cost_weight"_.Bind(0.5),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+        "post_constraint"_.Bind(true), "ctrl_cost_weight"_.Bind(0.1),
+        "dist_cost_weight"_.Bind(1.0), "near_cost_weight"_.Bind(0.5),
         "xml_file"_.Bind(std::string("pusher.xml")),
         "gymnasium_v5_render_camera"_.Bind(false),
         "reward_after_step"_.Bind(false), "weighted_reward_info"_.Bind(false),
@@ -45,8 +45,10 @@ class PusherEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
-    return MakeDict("obs"_.Bind(StackSpec(Spec<mjtNum>({23}, {-inf, inf}),
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({23}, {-inf, inf}),
                                           conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
                     "info:qpos0"_.Bind(Spec<mjtNum>({11})),
@@ -93,7 +95,8 @@ class PusherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["max_episode_steps"_], spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         id_tips_arm_(mj_name2id(model_, mjOBJ_XBODY, "tips_arm")),
         id_object_(mj_name2id(model_, mjOBJ_XBODY, "object")),
         id_goal_(mj_name2id(model_, mjOBJ_XBODY, "goal")),
@@ -156,33 +159,42 @@ class PusherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   }
 
   void Step(const Action& action) override {
-    // step
+    double reward_sum = 0.0;
     auto* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum near_cost = 0.0;
-    mjtNum dist_cost = 0.0;
-    if (!reward_after_step_) {
-      near_cost = GetDist(id_object_, id_tips_arm_);
-      dist_cost = GetDist(id_object_, id_goal_);
-    }
-    MujocoStep(act);
-    if (reward_after_step_) {
-      near_cost = GetDist(id_object_, id_tips_arm_);
-      dist_cost = GetDist(id_object_, id_goal_);
-    }
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum near_cost = 0.0;
+      mjtNum dist_cost = 0.0;
+      if (!reward_after_step_) {
+        near_cost = GetDist(id_object_, id_tips_arm_);
+        dist_cost = GetDist(id_object_, id_goal_);
+      }
+      MujocoStep(act);
+      if (reward_after_step_) {
+        near_cost = GetDist(id_object_, id_tips_arm_);
+        dist_cost = GetDist(id_object_, id_goal_);
+      }
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += act[i] * act[i];
-    }
-    mjtNum weighted_ctrl_cost = ctrl_cost * ctrl_cost_weight_;
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += act[i] * act[i];
+      }
+      mjtNum weighted_ctrl_cost = ctrl_cost * ctrl_cost_weight_;
 
-    // reward and done
-    auto reward =
-        static_cast<float>(-weighted_ctrl_cost - dist_cost * dist_cost_weight_ -
-                           near_cost * near_cost_weight_);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, ctrl_cost, dist_cost, near_cost, false);
+      // reward and done
+      auto reward = static_cast<float>(-weighted_ctrl_cost -
+                                       dist_cost * dist_cost_weight_ -
+                                       near_cost * near_cost_weight_);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), ctrl_cost, dist_cost,
+                   near_cost, false);
+        break;
+      }
+    }
   }
 
  private:
@@ -197,6 +209,9 @@ class PusherEnvBase : public Env<EnvSpecT>, public MujocoEnv {
                   mjtNum near_cost, bool reset) {
     auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];

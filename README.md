@@ -180,7 +180,7 @@ batch_size = 16
 env = envpool.make(
     "Pong-v5", env_type="gymnasium", num_envs=num_envs, batch_size=batch_size
 )
-action_num = env.action_space.n
+action_num = env.single_action_space.n
 env.async_reset()  # send the initial reset signal to all envs
 while True:
     obs, rew, term, trunc, info = env.recv()

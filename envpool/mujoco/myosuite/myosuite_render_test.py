@@ -467,8 +467,8 @@ def _assert_render_aligned(
 
 
 def _midpoint_action(env: Any) -> np.ndarray:
-    low = np.asarray(env.action_space.low, dtype=np.float32)
-    high = np.asarray(env.action_space.high, dtype=np.float32)
+    low = np.asarray(env.single_action_space.low, dtype=np.float32)
+    high = np.asarray(env.single_action_space.high, dtype=np.float32)
     return ((low + high) * 0.5).astype(np.float32)
 
 
@@ -511,6 +511,99 @@ def _envpool_trace_record(
 class MyoSuiteRenderTest(absltest.TestCase):
     """Validate native MyoSuite RGB rendering after reset and steps."""
 
+    def test_pixels_and_explicit_render_preserve_dynamics(self) -> None:
+        """Rendering must not change rewards or subsequent integration state."""
+        task_ids = _render_shard_task_ids(
+            _filter_render_task_ids((
+                "myoFingerReachRandom-v0",
+                "myoFatiFingerReachRandom-v0",
+                "myoLegWalk-v0",
+                "myoChallengeBaodingP1-v1",
+            ))
+        )
+        for task_id in task_ids:
+            with self.subTest(task_id=task_id):
+                options = dict(
+                    num_envs=1,
+                    seed=7,
+                    action_repeat=3,
+                    max_episode_steps=17,
+                    render_width=_WIDTH,
+                    render_height=_HEIGHT,
+                )
+                state_keys = (
+                    "qpos",
+                    "qvel",
+                    "act",
+                    "ctrl",
+                    "qacc_warmstart",
+                    "time",
+                )
+                state_env = make_gymnasium(task_id, **options)
+                try:
+                    state_env.reset()
+                    actions = (
+                        np.random
+                        .default_rng(19)
+                        .uniform(
+                            -1.0,
+                            1.0,
+                            size=(12, 1, *state_env.single_action_space.shape),
+                        )
+                        .astype(np.float32)
+                    )
+                    expected_trace = []
+                    for action in actions:
+                        step = state_env.step(action)
+                        expected_trace.append((
+                            tuple(value.copy() for value in step[1:4]),
+                            {key: step[4][key].copy() for key in state_keys},
+                        ))
+                finally:
+                    state_env.close()
+                    del state_env
+
+                # Replay sequentially so large leg models and their render
+                # contexts are not held three times at once. The seeded action
+                # trace and every exact dynamics assertion remain identical.
+                for from_pixels in (False, True):
+                    render_options = (
+                        {"from_pixels": True}
+                        if from_pixels
+                        else {"render_mode": "rgb_array"}
+                    )
+                    candidate = make_gymnasium(
+                        task_id, **options, **render_options
+                    )
+                    try:
+                        candidate.reset()
+                        for step_id, (action, expected) in enumerate(
+                            zip(actions, expected_trace, strict=True)
+                        ):
+                            # Include repeated renders before transitions,
+                            # episode boundaries, and a partial final repeat.
+                            if not from_pixels:
+                                _render(candidate)
+                                _render(candidate)
+                            actual = candidate.step(action)
+                            for value, expected_value in zip(
+                                actual[1:4], expected[0], strict=True
+                            ):
+                                np.testing.assert_array_equal(
+                                    value,
+                                    expected_value,
+                                    err_msg=f"{task_id} step {step_id}",
+                                )
+                            for key in state_keys:
+                                np.testing.assert_array_equal(
+                                    actual[4][key],
+                                    expected[1][key],
+                                    err_msg=f"{task_id} step {step_id} {key}",
+                                )
+                    finally:
+                        candidate.close()
+                        del candidate
+
     def test_reset_and_first_three_step_render(self) -> None:
         """Representative tasks render through reset and first three steps."""
         for task_id in _SHARDED_NATIVE_RENDER_TASK_IDS:
@@ -527,7 +620,7 @@ class MyoSuiteRenderTest(absltest.TestCase):
                     env.reset()
                     frames = [_render(env)]
                     action = np.zeros(
-                        (1, *env.action_space.shape), dtype=np.float32
+                        (1, *env.single_action_space.shape), dtype=np.float32
                     )
                     for _ in range(3):
                         env.step(action)

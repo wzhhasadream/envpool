@@ -392,11 +392,12 @@ class _HighwayAlignTest(absltest.TestCase):
         env = make_gymnasium("Highway-v0")
         try:
             self.assertEqual(
-                env.observation_space.shape, oracle.observation_space.shape
+                env.single_observation_space.shape,
+                oracle.observation_space.shape,
             )
-            assert isinstance(env.action_space, gym.spaces.Discrete)
+            assert isinstance(env.single_action_space, gym.spaces.Discrete)
             assert isinstance(oracle.action_space, gym.spaces.Discrete)
-            self.assertEqual(env.action_space.n, oracle.action_space.n)
+            self.assertEqual(env.single_action_space.n, oracle.action_space.n)
         finally:
             oracle.close()
             env.close()

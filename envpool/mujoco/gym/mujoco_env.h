@@ -42,6 +42,13 @@ using envpool::mujoco::RenderHeightOrDefault;
 using envpool::mujoco::RenderWidthOrDefault;
 using envpool::mujoco::StackSpec;
 
+// StateSpec validates this before the environment pool starts its workers.
+inline void ValidateActionRepeat(int action_repeat) {
+  if (action_repeat < 1) {
+    throw std::invalid_argument("action_repeat must be positive");
+  }
+}
+
 class MujocoEnv : public RenderableEnv {
  private:
   std::array<char, 1000> error_;
@@ -65,6 +72,9 @@ class MujocoEnv : public RenderableEnv {
   mjtNum *qpos0_{nullptr}, *qvel0_{nullptr};  // for align check
 #endif
   int frame_skip_;
+  // Repeat whole control steps without changing the physics frame skip.
+  int action_repeat_;
+  float per_timestep_reward_{0.0f};
   int frame_stack_;
   bool post_constraint_;
   int max_episode_steps_, elapsed_step_;
@@ -82,10 +92,12 @@ class MujocoEnv : public RenderableEnv {
  public:
   MujocoEnv(const std::string& xml, int frame_skip, bool post_constraint,
             int max_episode_steps, int frame_stack, int render_width = 84,
-            int render_height = 84, int render_camera_id = -1)
+            int render_height = 84, int render_camera_id = -1,
+            int action_repeat = 1)
       : xml_path_(ResolveXMLPath(xml)),
         model_(mj_loadXML(xml_path_.c_str(), nullptr, error_.data(), 1000)),
         frame_skip_(frame_skip),
+        action_repeat_(action_repeat),
         frame_stack_(frame_stack),
         post_constraint_(post_constraint),
         max_episode_steps_(max_episode_steps),

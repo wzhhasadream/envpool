@@ -21,10 +21,12 @@
 #include <mujoco.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,11 +43,40 @@
 
 namespace mujoco_dmc {
 
-using envpool::mujoco::PixelObservationEnvFns;
 using envpool::mujoco::RenderCameraIdOrDefault;
 using envpool::mujoco::RenderHeightOrDefault;
 using envpool::mujoco::RenderWidthOrDefault;
 using envpool::mujoco::StackSpec;
+
+// DMC wrappers conventionally render camera 0; quadruped uses camera 2.
+// Keep this local to DMC and retain explicit camera overrides, including -1.
+template <typename BaseEnvFns, int kCameraId = 0>
+class PixelObservationEnvFns
+    : public envpool::mujoco::PixelObservationEnvFns<BaseEnvFns> {
+ public:
+  static decltype(auto) DefaultConfig() {
+    auto config =
+        envpool::mujoco::PixelObservationEnvFns<BaseEnvFns>::DefaultConfig();
+    config["render_camera_id"_] = kCameraId;
+    return config;
+  }
+};
+
+// Validate while constructing state and pixel specs, before workers start.
+inline int ValidateActionRepeat(int action_repeat) {
+  if (action_repeat < 1) {
+    throw std::invalid_argument("action_repeat must be positive");
+  }
+  return action_repeat;
+}
+
+inline double ValidateFrictionMultiplier(double friction_multiplier) {
+  if (!std::isfinite(friction_multiplier) || friction_multiplier < 0.0) {
+    throw std::invalid_argument(
+        "friction_multiplier must be finite and nonnegative");
+  }
+  return friction_multiplier;
+}
 
 /*
  * This class combines with dmc Task and Physics API.
@@ -63,8 +94,9 @@ class MujocoEnv : public RenderableEnv {
  protected:
   mjModel* model_;
   mjData* data_;
-  int n_sub_steps_, max_episode_steps_, elapsed_step_;
+  int n_sub_steps_, action_repeat_, max_episode_steps_, elapsed_step_;
   float reward_, discount_;
+  float last_reward_{0.0f};
   bool done_{true};
 #ifdef ENVPOOL_TEST
   std::unique_ptr<mjtNum> qpos0_;
@@ -83,7 +115,8 @@ class MujocoEnv : public RenderableEnv {
   MujocoEnv(const std::string& base_path, const std::string& raw_xml,
             int n_sub_steps, int max_episode_steps, int frame_stack,
             int render_width = 84, int render_height = 84,
-            int render_camera_id = -1);
+            int render_camera_id = -1, int action_repeat = 1,
+            double friction_multiplier = 1.0);
   ~MujocoEnv() override;
 
   // rl control Environment

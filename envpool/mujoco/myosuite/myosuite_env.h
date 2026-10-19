@@ -34,6 +34,7 @@
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
+#include "envpool/mujoco/myosuite/reward_utils.h"
 #include "envpool/mujoco/robotics/mujoco_env.h"
 #include "third_party/myosuite/myosuite_reference_data.h"
 #include "third_party/myosuite/myosuite_task_metadata.h"
@@ -58,16 +59,58 @@ using third_party::myosuite::MyoSuiteTaskDef;
 using third_party::myosuite::MyoSuiteTaskKind;
 using third_party::myosuite::MyoSuiteTaskMetadata;
 
+template <typename Config>
+const MyoSuiteTaskDef& MyoSuiteTaskForEnv(const Config& conf, int env_id) {
+  const auto& names = conf["env_task_names"_];
+  return GetMyoSuiteTask(names.empty() ? std::string(conf["task_name"_])
+                                       : names.at(env_id));
+}
+
+template <typename Config>
+int MyoSuiteHorizonForEnv(const Config& conf, int env_id) {
+  const auto& horizons = conf["env_max_episode_steps"_];
+  return horizons.empty() ? conf["max_episode_steps"_] : horizons.at(env_id);
+}
+
 class MyoSuiteEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
-    return MakeDict("frame_stack"_.Bind(1),
+    return MakeDict("frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}),
                     "task_name"_.Bind(std::string("myoFingerReachFixed-v0")));
   }
 
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    if (conf["action_repeat"_] < 1) {
+      throw std::invalid_argument("action_repeat must be positive");
+    }
     const auto& task = GetMyoSuiteTask(std::string(conf["task_name"_]));
+    const auto& names = conf["env_task_names"_];
+    const auto& horizons = conf["env_max_episode_steps"_];
+    const auto num_envs = static_cast<std::size_t>(conf["num_envs"_]);
+    if ((!names.empty() && names.size() != num_envs) ||
+        (!horizons.empty() && horizons.size() != num_envs)) {
+      throw std::invalid_argument(
+          "env_task_names and env_max_episode_steps must be empty or contain "
+          "exactly num_envs entries");
+    }
+    if (conf["max_episode_steps"_] <= 0 ||
+        std::any_of(horizons.begin(), horizons.end(),
+                    [](int horizon) { return horizon <= 0; })) {
+      throw std::invalid_argument("episode horizons must be positive");
+    }
+    for (const auto& name : names) {
+      const auto& selected = GetMyoSuiteTask(name);
+      if (selected.obs_dim != task.obs_dim ||
+          selected.action_dim != task.action_dim) {
+        throw std::invalid_argument(
+            "MyoSuite env_task_names must share observation and action "
+            "dimensions with task_name: " +
+            name);
+      }
+    }
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     return MakeDict(
         "obs"_.Bind(StackSpec(Spec<mjtNum>({task.obs_dim}, {-inf, inf}),
@@ -75,6 +118,8 @@ class MyoSuiteEnvFns {
         "info:task_id"_.Bind(Spec<int>({-1})),
         "info:sparse"_.Bind(Spec<mjtNum>({-1})),
         "info:solved"_.Bind(Spec<mjtNum>({-1}, {0.0, 1.0})),
+        "info:success"_.Bind(Spec<mjtNum>({-1}, {0.0, 1.0})),
+        "info:per_timestep_reward"_.Bind(Spec<mjtNum>({-1})),
         "info:oracle_numpy2_broken"_.Bind(Spec<bool>({})),
 #ifdef ENVPOOL_TEST
         "info:qpos0"_.Bind(Spec<mjtNum>({2048})),
@@ -215,6 +260,7 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
   mjtNum bimanual_init_palm_z_{0.0};
   mjtNum sparse_{0.0};
   mjtNum solved_{0.0};
+  mjtNum last_reward_{0.0};
 #ifdef ENVPOOL_TEST
   std::vector<mjtNum> qpos0_pad_;
   std::vector<mjtNum> qvel0_pad_;
@@ -273,18 +319,16 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
         gymnasium_robotics::MujocoRobotEnv(
             spec.config["base_path"_],
             AssetPath(spec.config["base_path"_],
-                      GetMyoSuiteTask(std::string(spec.config["task_name"_]))
-                          .model_path),
-            GetMyoSuiteTask(std::string(spec.config["task_name"_])).frame_skip,
-            spec.config["max_episode_steps"_], spec.config["frame_stack"_],
+                      MyoSuiteTaskForEnv(spec.config, env_id).model_path),
+            MyoSuiteTaskForEnv(spec.config, env_id).frame_skip,
+            MyoSuiteHorizonForEnv(spec.config, env_id),
+            spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config)),
-        task_(GetMyoSuiteTask(std::string(spec.config["task_name"_]))),
-        metadata_(
-            GetMyoSuiteTaskMetadata(std::string(spec.config["task_name"_]))),
-        reference_(
-            GetMyoSuiteReferenceData(std::string(spec.config["task_name"_]))),
+        task_(MyoSuiteTaskForEnv(spec.config, env_id)),
+        metadata_(GetMyoSuiteTaskMetadata(task_.id)),
+        reference_(GetMyoSuiteReferenceData(task_.id)),
         task_index_(TaskIndex(task_.id)),
         obs_keys_(SplitList(metadata_.obs_keys)),
         reward_weights_(ParseWeights(metadata_.rwd_keys_wt)),
@@ -368,6 +412,7 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
     bimanual_goal_touch_ = 0;
     sparse_ = 0.0;
     solved_ = 0.0;
+    last_reward_ = 0.0;
     ResetFatigue();
     ResetToInitialState();
     ResetOslController();
@@ -380,52 +425,66 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
 
   void Step(const Action& action) override {
     const auto* raw = static_cast<float*>(action["action"_].Data());
-    std::vector<mjtNum> ctrl(model_->nu);
-    const int action_dim =
-        std::min(static_cast<int>(model_->nu), task_.action_dim);
-    for (int i = 0; i < action_dim; ++i) {
-      mjtNum value = std::max<mjtNum>(-1.0, std::min<mjtNum>(1.0, raw[i]));
-      if (model_->na > 0 && task_.normalize_act &&
-          model_->actuator_dyntype[i] == mjDYN_MUSCLE) {
-        const auto action_value = static_cast<float>(value);
-        value = static_cast<mjtNum>(
-            1.0F / (1.0F + std::exp(-5.0F * (action_value - 0.5F))));
+    mjtNum total_reward = 0.0;
+    for (int repeat = 0; repeat < spec_.config["action_repeat"_]; ++repeat) {
+      std::vector<mjtNum> ctrl(model_->nu);
+      const int action_dim =
+          std::min(static_cast<int>(model_->nu), task_.action_dim);
+      for (int i = 0; i < action_dim; ++i) {
+        mjtNum value = std::max<mjtNum>(-1.0, std::min<mjtNum>(1.0, raw[i]));
+        if (model_->na > 0 && task_.normalize_act &&
+            model_->actuator_dyntype[i] == mjDYN_MUSCLE) {
+          const auto action_value = static_cast<float>(value);
+          value = static_cast<mjtNum>(
+              1.0F / (1.0F + std::exp(-5.0F * (action_value - 0.5F))));
+        }
+        if (task_.muscle_condition ==
+            MyoSuiteMuscleCondition::kReafferentation) {
+          // Applied below after EIP has been copied to EPL.
+        }
+        ctrl[i] = value;
       }
-      if (task_.muscle_condition == MyoSuiteMuscleCondition::kReafferentation) {
-        // Applied below after EIP has been copied to EPL.
+      ApplyFatigue(&ctrl);
+      ApplyReafferentation(&ctrl);
+      ApplyOslControls(&ctrl);
+      PreStepTaskUpdate();
+      const bool robot_step_normalizes_ctrl =
+          task_.normalize_act &&
+          (model_->na == 0 ||
+           task_.kind == MyoSuiteTaskKind::kChallengeTableTennis);
+      for (int i = 0; i < model_->nu; ++i) {
+        if (robot_step_normalizes_ctrl &&
+            (model_->na == 0 || model_->actuator_dyntype[i] != mjDYN_MUSCLE)) {
+          const mjtNum low = model_->actuator_ctrlrange[2 * i];
+          const mjtNum high = model_->actuator_ctrlrange[2 * i + 1];
+          ctrl[i] = (low + high) * 0.5 + ctrl[i] * (high - low) * 0.5;
+        }
+        data_->ctrl[i] = ctrl[i];
       }
-      ctrl[i] = value;
+      last_ctrl_ = ctrl;
+      DoSimulation();
+      // MyoSuite observes through Robot.sensor2sim(), which calls sim.forward()
+      // after copying the final qpos/qvel/act back into the observed sim.
+      mj_forward(model_, data_);
+      ++elapsed_step_;
+      const auto obs_dict = BuildObsDict();
+      const RewardResult reward = ComputeReward(obs_dict);
+      sparse_ = reward.sparse;
+      solved_ = reward.solved;
+      last_reward_ = reward.dense;
+      total_reward += last_reward_;
+      done_ = reward.terminated || elapsed_step_ >= max_episode_steps_;
+      // Emit only the final control step, before the task's post-step update,
+      // exactly as in a single original step. Intermediate observations still
+      // drive rewards, termination, and task bookkeeping at the original rate.
+      if (done_ || repeat + 1 == spec_.config["action_repeat"_]) {
+        WriteState(total_reward, false, obs_dict);
+      }
+      PostStepTaskUpdate();
+      if (done_) {
+        break;
+      }
     }
-    ApplyFatigue(&ctrl);
-    ApplyReafferentation(&ctrl);
-    ApplyOslControls(&ctrl);
-    PreStepTaskUpdate();
-    const bool robot_step_normalizes_ctrl =
-        task_.normalize_act &&
-        (model_->na == 0 ||
-         task_.kind == MyoSuiteTaskKind::kChallengeTableTennis);
-    for (int i = 0; i < model_->nu; ++i) {
-      if (robot_step_normalizes_ctrl &&
-          (model_->na == 0 || model_->actuator_dyntype[i] != mjDYN_MUSCLE)) {
-        const mjtNum low = model_->actuator_ctrlrange[2 * i];
-        const mjtNum high = model_->actuator_ctrlrange[2 * i + 1];
-        ctrl[i] = (low + high) * 0.5 + ctrl[i] * (high - low) * 0.5;
-      }
-      data_->ctrl[i] = ctrl[i];
-    }
-    last_ctrl_ = ctrl;
-    DoSimulation();
-    // MyoSuite observes through Robot.sensor2sim(), which calls sim.forward()
-    // after copying the final qpos/qvel/act back into the observed sim.
-    mj_forward(model_, data_);
-    ++elapsed_step_;
-    const auto obs_dict = BuildObsDict();
-    const RewardResult reward = ComputeReward(obs_dict);
-    sparse_ = reward.sparse;
-    solved_ = reward.solved;
-    done_ = reward.terminated || elapsed_step_ >= max_episode_steps_;
-    WriteState(reward.dense, false, obs_dict);
-    PostStepTaskUpdate();
   }
 
   bool RenderCamera(mjvCamera* camera) override {
@@ -1097,11 +1156,12 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
         continue;
       }
       for (int axis = 0; axis < 3; ++axis) {
-        // Use the midpoint as the native deterministic reset target. Oracle
-        // alignment tests sync randomized upstream state immediately after
-        // reset when the official task randomizes this site.
-        model_->site_pos[3 * site_id + axis] =
-            (target_reach_low_[i][axis] + target_reach_high_[i][axis]) * 0.5;
+        // ReachEnvV0.generate_target_pose samples each target coordinate
+        // uniformly. Equal bounds retain fixed-task targets; gen_ preserves
+        // native seeded rollout determinism without freezing random tasks.
+        std::uniform_real_distribution<mjtNum> target(
+            target_reach_low_[i][axis], target_reach_high_[i][axis]);
+        model_->site_pos[3 * site_id + axis] = target(gen_);
       }
     }
     if (task_.kind == MyoSuiteTaskKind::kChallengeBimanual) {
@@ -2070,11 +2130,14 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
       const mjtNum phase =
           std::fmod(static_cast<mjtNum>(task_step_) / hip_period, 1.0);
       const std::vector<mjtNum> des_angles = {
-          0.8 * std::cos(phase * 2.0 * pi + pi),
-          0.8 * std::cos(phase * 2.0 * pi)};
+          static_cast<float>(0.8 * std::cos(phase * 2.0 * pi + pi)),
+          static_cast<float>(0.8 * std::cos(phase * 2.0 * pi))};
       const mjtNum cyclic_hip = Norm(Subtract(
           des_angles, JointAngles({"hip_flexion_l", "hip_flexion_r"})));
-      const mjtNum ref_rot = 1.0;
+      // Every registered Walk/Terrain task uses target_rot=None, meaning the
+      // initial root quaternion in the pinned oracle.
+      const mjtNum ref_rot =
+          ReferenceRotationReward(data_->qpos + 3, initial_qpos_.data() + 3);
       const auto joint_angles =
           JointAngles({"hip_adduction_l", "hip_adduction_r", "hip_rotation_l",
                        "hip_rotation_r"});
@@ -2478,10 +2541,14 @@ class MyoSuiteEnvBase : public Env<EnvSpecT>,
       AssignObservation("obs", &obs_state, obs.data(), obs.size(), reset);
     }
     state["reward"_] = static_cast<float>(reward);
+    state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = elapsed_step_ >= max_episode_steps_;
     state["info:task_id"_] = task_index_;
     state["info:sparse"_] = sparse_;
     state["info:solved"_] = solved_;
+    // ApexRL exposes the current step's solved flag as success as well.
+    state["info:success"_] = solved_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["info:oracle_numpy2_broken"_] = task_.oracle_numpy2_broken;
     state["info:model_nq"_] = model_->nq;
     state["info:model_nv"_] = model_->nv;

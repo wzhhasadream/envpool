@@ -49,6 +49,9 @@ class OffscreenRenderer {
       bool prefer_offline_cgl_context = false, bool resize_offscreen = true);
   ~OffscreenRenderer();
 
+  // Refresh a modified heightfield if this renderer has a context already.
+  void UploadHeightField(const mjModel* model, int hfield_id);
+
   void Render(const mjModel* model, mjData* data, int width, int height,
               int camera_id, unsigned char* rgb,
               const mjvCamera* camera_override = nullptr,

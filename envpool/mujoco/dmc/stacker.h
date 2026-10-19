@@ -56,13 +56,17 @@ class StackerEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("stack_2")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     int n_boxes = StackerNumBoxes(conf["task_name"_]);
     [[maybe_unused]] int qpos_size = 8 + 3 * n_boxes;
     return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
         "obs:arm_pos"_.Bind(
             StackSpec(Spec<mjtNum>({8, 2}), conf["frame_stack"_])),
         "obs:arm_vel"_.Bind(StackSpec(Spec<mjtNum>({8}), conf["frame_stack"_])),
@@ -139,7 +143,8 @@ class StackerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         n_boxes_(StackerNumBoxes(spec.config["task_name"_])),
         id_finger_(GetQposId(model_, "finger")),
         id_thumb_(GetQposId(model_, "thumb")),
@@ -307,7 +312,10 @@ class StackerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   void WriteState(bool reset) {
     auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];
       AssignPixelObservation("obs:pixels", &obs_pixels, reset);

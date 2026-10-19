@@ -67,9 +67,9 @@ class _AtariEnvPoolTest(absltest.TestCase):
 
     def test_full_action_space(self) -> None:
         env = make_gym("Pong-v5", full_action_space=True)
-        self.assertEqual(env.action_space.n, 18)
+        self.assertEqual(env.single_action_space.n, 18)
         env = make_gym("Breakout-v5", full_action_space=True)
-        self.assertEqual(env.action_space.n, 18)
+        self.assertEqual(env.single_action_space.n, 18)
 
     def test_mode_and_difficulty_change_reset_observation(self) -> None:
         kwargs = {
@@ -136,7 +136,7 @@ class _AtariEnvPoolTest(absltest.TestCase):
                 "".join([g.capitalize() for g in env_id.split("_")]) + "-v5"
             )
             env = make_gym(task_id, episodic_life=True)
-            action_num = env.action_space.n
+            action_num = env.single_action_space.n
             env.reset()
             info = env.step(np.array([0]))[-1]
             if info["lives"].sum() == 0:
@@ -325,15 +325,17 @@ class _AtariEnvPoolTest(absltest.TestCase):
         ref_shape = (12, 84, 84)
         raw_shape = (12, 210, 160)
         env = make_gym("Breakout-v5", gray_scale=False)
-        self.assertTrue(env.observation_space.shape, ref_shape)
+        self.assertEqual(env.single_observation_space.shape, ref_shape)
+        self.assertEqual(env.observation_space.shape, (1, *ref_shape))
         obs, _ = env.reset()
-        self.assertTrue(obs.shape, ref_shape)
+        self.assertEqual(obs.shape, env.observation_space.shape)
         env = make_gym(
             "Breakout-v5", gray_scale=False, img_height=210, img_width=160
         )
-        self.assertTrue(env.observation_space.shape, raw_shape)
+        self.assertEqual(env.single_observation_space.shape, raw_shape)
+        self.assertEqual(env.observation_space.shape, (1, *raw_shape))
         obs1, _ = env.reset()
-        self.assertTrue(obs1.shape, raw_shape)
+        self.assertEqual(obs1.shape, env.observation_space.shape)
         for i in range(0, 12, 3):
             obs_ = cv2.resize(
                 obs1[0, i : i + 3].transpose(1, 2, 0),

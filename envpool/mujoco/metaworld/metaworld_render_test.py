@@ -321,7 +321,7 @@ class MetaWorldRenderTest(absltest.TestCase):
                 )
                 try:
                     env.reset()
-                    action = _zero_action(env.action_space, 1)
+                    action = _zero_action(env.single_action_space, 1)
                     for step_idx in range(_RENDER_STEPS):
                         frame = _render_array(env)
                         self.assertEqual(
@@ -351,7 +351,7 @@ class MetaWorldRenderTest(absltest.TestCase):
         )
         try:
             env.reset()
-            action = _zero_action(env.action_space, 2)
+            action = _zero_action(env.single_action_space, 2)
             for step_idx in range(_RENDER_STEPS):
                 frame0 = _render_array(env)
                 frame1 = _render_array(env, env_ids=1)
@@ -387,10 +387,14 @@ class MetaWorldRenderTest(absltest.TestCase):
         finally:
             env.close()
 
-    def test_rgb_array_render_matches_official_reset_frame(
+    def test_rgb_array_render_matches_official_reset_and_multistep(
         self,
     ) -> None:
-        """EnvPool reset frames should closely match official MetaWorld."""
+        """Match official frames after one reset sync and shared actions."""
+        rng = np.random.default_rng(20260412)
+        actions = rng.uniform(-1.0, 1.0, size=(_RENDER_STEPS, 4)).astype(
+            np.float32
+        )
         for task_id, task_name in zip(_TASK_IDS, _TASK_NAMES, strict=True):
             with self.subTest(task_id=task_id):
                 env = make_gymnasium(
@@ -411,6 +415,14 @@ class MetaWorldRenderTest(absltest.TestCase):
                         _render_official_array(oracle),
                         f"{task_id} reset",
                     )
+                    for step_id, action in enumerate(actions, start=1):
+                        env.step(action[np.newaxis, :])
+                        oracle.step(action)
+                        _assert_frames_close_to_official(
+                            _render_array(env)[0],
+                            _render_official_array(oracle),
+                            f"{task_id} step {step_id}",
+                        )
                 finally:
                     env.close()
                     oracle.close()

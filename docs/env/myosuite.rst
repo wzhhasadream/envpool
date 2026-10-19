@@ -1,6 +1,9 @@
 MyoSuite
 ========
 
+For native ``action_repeat`` configuration and stepping semantics, see
+:doc:`mujoco_action_repeat`.
+
 EnvPool's MyoSuite integration uses ``myosuite==2.11.6`` pinned at commit
 ``05cb84678373f91271004f99602ebbf01e57d1a1`` with ``mujoco==3.6.0``.
 The runtime implementation is native C++; the official Python package is used
@@ -9,6 +12,36 @@ only by oracle tests and doc-generation tooling.
 The generated upstream registry and task metadata live under
 ``third_party/myosuite/``. Runtime C++ consumes those generated assets instead
 of keeping a handwritten task list in ``envpool/mujoco/myosuite/``.
+
+
+Success Info
+------------
+
+``info["success"]`` is an additive alias of ``info["solved"]``. Both are
+``float64`` arrays containing ``0.0`` or ``1.0`` for each environment. They
+describe the current control step's task-specific solved condition, which is
+independent of termination and truncation. Both are zero on reset.
+
+With ``action_repeat > 1``, both fields describe the final executed control
+step, including an early terminal step. They do not accumulate success across
+repeated steps or an episode. MyoSuite does not expose ``live`` or ``lives``;
+Atari's ``lives`` field is a separate game-specific counter.
+
+This matches the value semantics of `ApexRL's MyoSuite wrapper
+<https://github.com/wzhhasadream/ApexRL/blob/bb4c8899164237d2a4e27b3bcd8e32b4b6c2c332/ApexRL/envs/myosuite.py#L49-L52>`_,
+which copies ``solved`` to ``success``. ApexRL preserves the upstream boolean
+dtype for these tasks; EnvPool retains its existing numeric ``solved`` dtype
+for both fields. ``success`` is available in state and pixel environments,
+including compatible multitask pools.
+
+EnvPool retains ``NEXT_STEP`` autoreset. ApexRL's ``SameStep`` vector wrapper
+instead places terminal information in ``final_info``. Its
+``avg_success_once`` and ``avg_success_end`` metrics are computed separately
+by `the evaluator
+<https://github.com/wzhhasadream/ApexRL/blob/bb4c8899164237d2a4e27b3bcd8e32b4b6c2c332/ApexRL/common/evaluate.py#L44-L54>`_.
+An evaluator using EnvPool directly must read terminal ``success`` from the
+returned step info, before the next call resets that slot; the alias does not
+add ``final_info`` or change autoreset behavior.
 
 
 Env IDs

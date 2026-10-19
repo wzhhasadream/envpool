@@ -141,6 +141,10 @@ class ArraySpec:
 class EnvPool(Protocol):
     """Cpp PyEnvpool class interface."""
 
+    # Public task-to-slot metadata supplied by make_multitask.
+    task_ids: tuple[str, ...]
+    env_task_ids: tuple[str, ...]
+
     _state_keys: list[str]
     _state_names: list[str]
     _action_keys: list[str]
@@ -234,7 +238,7 @@ class EnvPool(Protocol):
 
     @property
     def is_async(self) -> bool:
-        """Return if this env is in sync mode or async mode."""
+        """Whether this environment pool runs asynchronously."""
 
     @property
     def observation_space(self) -> Any:

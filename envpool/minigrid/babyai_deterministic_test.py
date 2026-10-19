@@ -74,7 +74,7 @@ class BabyAIEnvPoolDeterministicTest(absltest.TestCase):
             if total is None:
                 total = _max_debug_steps(env0, num_envs)
             for _ in range(total):
-                action = np.array([act_space.sample() for _ in range(num_envs)])
+                action = act_space.sample()
                 obs0, rew0, term0, trunc0, info0 = env0.step(action)
                 obs1, rew1, term1, trunc1, info1 = env1.step(action)
                 self._assert_obs_equal(obs0, obs1)
@@ -114,7 +114,7 @@ class BabyAIEnvPoolDeterministicTest(absltest.TestCase):
                 not np.array_equal(obs0[key], obs1[key]) for key in obs0
             )
             for _ in range(total):
-                action = np.array([act_space.sample() for _ in range(num_envs)])
+                action = act_space.sample()
                 obs0, rew0, term0, trunc0, _ = env0.step(action)
                 obs1, rew1, term1, trunc1, _ = env1.step(action)
                 differs = (

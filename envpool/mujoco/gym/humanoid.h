@@ -32,7 +32,7 @@ class HumanoidEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict(
-        "frame_skip"_.Bind(5), "frame_stack"_.Bind(1),
+        "frame_skip"_.Bind(5), "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
         "post_constraint"_.Bind(true), "legacy_healthy_reward"_.Bind(true),
         "exclude_worldbody_observations"_.Bind(false),
         "exclude_root_actuator_forces"_.Bind(false),
@@ -48,6 +48,7 @@ class HumanoidEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     bool no_pos = conf["exclude_current_positions_from_observation"_];
     int obs_n = no_pos ? 376 : 378;
@@ -57,7 +58,8 @@ class HumanoidEnvFns {
     if (conf["exclude_root_actuator_forces"_]) {
       obs_n -= 6;
     }
-    return MakeDict("obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
                                           conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
                     "info:qpos0"_.Bind(Spec<mjtNum>({24})),
@@ -113,7 +115,8 @@ class HumanoidEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["max_episode_steps"_], spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         terminate_when_unhealthy_(spec.config["terminate_when_unhealthy"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
         use_contact_force_(spec.config["use_contact_force"_]),
@@ -170,45 +173,54 @@ class HumanoidEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   }
 
   void Step(const Action& action) override {
-    // step
+    double reward_sum = 0.0;
     auto* act = static_cast<mjtNum*>(action["action"_].Data());
-    const auto& before = GetMassCenter();
-    MujocoStep(act);
-    const auto& after = GetMassCenter();
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      const auto& before = GetMassCenter();
+      MujocoStep(act);
+      const auto& after = GetMassCenter();
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
-    }
-    // xv and yv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (after[0] - before[0]) / dt;
-    mjtNum yv = (after[1] - before[1]) / dt;
-    // contact cost
-    mjtNum contact_cost = 0.0;
-    if (use_contact_force_) {
-      for (int i = 0; i < 6 * model_->nbody; ++i) {
-        mjtNum x = data_->cfrc_ext[i];
-        contact_cost += contact_cost_weight_ * x * x;
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
       }
-      contact_cost = std::min(contact_cost, contact_cost_max_);
-    }
+      // xv and yv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (after[0] - before[0]) / dt;
+      mjtNum yv = (after[1] - before[1]) / dt;
+      // contact cost
+      mjtNum contact_cost = 0.0;
+      if (use_contact_force_) {
+        for (int i = 0; i < 6 * model_->nbody; ++i) {
+          mjtNum x = data_->cfrc_ext[i];
+          contact_cost += contact_cost_weight_ * x * x;
+        }
+        contact_cost = std::min(contact_cost, contact_cost_max_);
+      }
 
-    // reward and done
-    bool is_healthy = IsHealthy();
-    bool give_healthy_reward = is_healthy;
-    if (legacy_healthy_reward_) {
-      give_healthy_reward = terminate_when_unhealthy_ || is_healthy;
+      // reward and done
+      bool is_healthy = IsHealthy();
+      bool give_healthy_reward = is_healthy;
+      if (legacy_healthy_reward_) {
+        give_healthy_reward = terminate_when_unhealthy_ || is_healthy;
+      }
+      mjtNum healthy_reward = give_healthy_reward ? healthy_reward_ : 0.0;
+      auto reward =
+          static_cast<float>(xv * forward_reward_weight_ + healthy_reward -
+                             ctrl_cost - contact_cost);
+      ++elapsed_step_;
+      done_ = (terminate_when_unhealthy_ ? !is_healthy : false) ||
+              (elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, yv, ctrl_cost,
+                   contact_cost, after[0], after[1], healthy_reward, false);
+        break;
+      }
     }
-    mjtNum healthy_reward = give_healthy_reward ? healthy_reward_ : 0.0;
-    auto reward = static_cast<float>(xv * forward_reward_weight_ +
-                                     healthy_reward - ctrl_cost - contact_cost);
-    ++elapsed_step_;
-    done_ = (terminate_when_unhealthy_ ? !is_healthy : false) ||
-            (elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, yv, ctrl_cost, contact_cost, after[0], after[1],
-               healthy_reward, false);
   }
 
  private:
@@ -234,6 +246,9 @@ class HumanoidEnvBase : public Env<EnvSpecT>, public MujocoEnv {
                   mjtNum healthy_reward, bool reset) {
     auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];

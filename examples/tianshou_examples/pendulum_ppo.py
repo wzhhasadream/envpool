@@ -84,9 +84,9 @@ def run_ppo(args):
     test_envs = envpool.make_gym(args.task, num_envs=args.test_num)
     args.state_shape = env.observation_space.shape or env.observation_space.n
     args.action_shape = env.action_space.shape or env.action_space.n
-    # ss_ = train_envs.observation_space.shape or train_envs.observation_space.n
+    # ss_ = train_envs.single_observation_space.shape or train_envs.single_observation_space.n
     # assert ss_ == args.state_shape
-    # as_ = train_envs.action_space.shape or train_envs.action_space.n
+    # as_ = train_envs.single_action_space.shape or train_envs.single_action_space.n
     # assert as_ == args.action_shape
 
     # train_envs = DummyVectorEnv(

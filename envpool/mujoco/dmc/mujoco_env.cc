@@ -74,8 +74,10 @@ void AddReferencedAssetsToVFS(mjVFS* vfs, const std::string& base_path,
 
 MujocoEnv::MujocoEnv(const std::string& base_path, const std::string& raw_xml,
                      int n_sub_steps, int max_episode_steps, int frame_stack,
-                     int render_width, int render_height, int render_camera_id)
+                     int render_width, int render_height, int render_camera_id,
+                     int action_repeat, double friction_multiplier)
     : n_sub_steps_(n_sub_steps),
+      action_repeat_(ValidateActionRepeat(action_repeat)),
       max_episode_steps_(max_episode_steps),
       elapsed_step_(max_episode_steps + 1),
       frame_stack_buffer_(frame_stack),
@@ -83,6 +85,7 @@ MujocoEnv::MujocoEnv(const std::string& base_path, const std::string& raw_xml,
       render_width_(render_width),
       render_height_(render_height),
       render_camera_id_(render_camera_id) {
+  ValidateFrictionMultiplier(friction_multiplier);
   // initialize vfs from common assets and raw xml
   // https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/mujoco/wrapper/core.py#L158
   // https://github.com/deepmind/mujoco/blob/main/python/mujoco/structs.cc
@@ -110,6 +113,21 @@ MujocoEnv::MujocoEnv(const std::string& base_path, const std::string& raw_xml,
   if (model_ == nullptr) {
     throw std::runtime_error(error_.data());
   }
+  // Scale the freshly compiled MJCF baseline exactly once. Current DMC tasks
+  // neither reload the model nor randomize friction during reset. In
+  // particular, do not repeat this multiplication in ControlReset/PhysicsReset:
+  // doing so would compound it across episodes. Leave the default model
+  // untouched.
+  if (friction_multiplier != 1.0) {
+    for (int i = 0; i < 3 * model_->ngeom; ++i) {
+      model_->geom_friction[i] *= friction_multiplier;
+    }
+    // Explicit contact pairs override geom friction and have separate sliding
+    // and rolling coefficients for each tangent direction (five total).
+    for (int i = 0; i < 5 * model_->npair; ++i) {
+      model_->pair_friction[i] *= friction_multiplier;
+    }
+  }
   data_ = mj_makeData(model_);
 #ifdef ENVPOOL_TEST
   qpos0_.reset(new mjtNum[model_->nq]);
@@ -126,6 +144,8 @@ MujocoEnv::~MujocoEnv() {
 void MujocoEnv::ControlReset() {
   has_cached_render_ = false;
   elapsed_step_ = 0;
+  reward_ = 0.0f;
+  last_reward_ = 0.0f;
   discount_ = 1.0;
   done_ = false;
   TaskInitializeEpisodeMjcf();
@@ -138,22 +158,33 @@ void MujocoEnv::ControlReset() {
 // https://github.com/deepmind/dm_control/blob/1.0.2/dm_control/rl/control.py#L94
 void MujocoEnv::ControlStep(const mjtNum* action) {
   has_cached_render_ = false;
-  TaskBeforeStep(action);
-  PhysicsStep(n_sub_steps_, action);
-  TaskAfterStep();
-  reward_ = TaskGetReward();
-  if (++elapsed_step_ >= max_episode_steps_) {
-    discount_ = 1.0;
-    done_ = true;
-  } else if (TaskShouldTerminateEpisode()) {
-    // copy from composer task
-    // this is different because we don't use None in C++
-    discount_ = 0.0;
-    done_ = true;
-  } else {
-    discount_ = TaskGetDiscount();
-    done_ = false;
+  double total_reward = 0.0;
+  for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+    // Repeat complete control steps, keeping the physics timestep and all
+    // task hooks unchanged. Observations are published only after this loop.
+    TaskBeforeStep(action);
+    PhysicsStep(n_sub_steps_, action);
+    TaskAfterStep();
+    reward_ = TaskGetReward();
+    last_reward_ = reward_;
+    // Preserve the original float reward exactly when action_repeat is 1.
+    total_reward = repeat == 0 ? reward_ : total_reward + reward_;
+    if (++elapsed_step_ >= max_episode_steps_) {
+      discount_ = 1.0;
+      done_ = true;
+    } else if (TaskShouldTerminateEpisode()) {
+      // Preserve the existing horizon-first termination/discount semantics.
+      discount_ = 0.0;
+      done_ = true;
+    } else {
+      discount_ = TaskGetDiscount();
+      done_ = false;
+    }
+    if (done_) {
+      break;
+    }
   }
+  reward_ = static_cast<float>(total_reward);
 }
 
 // Task

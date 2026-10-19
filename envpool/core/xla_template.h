@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -125,7 +126,14 @@ struct CustomCall {
     if (auto err = PopulateOutBuffers(rets, &out_arr); err.failure()) {
       return err;
     }
-    CC::Cpu(*obj, in_arr, out_arr);
+    // Never let native validation exceptions cross the XLA C ABI.
+    try {
+      CC::Cpu(*obj, in_arr, out_arr);
+    } catch (const std::invalid_argument& error) {
+      return xla_ffi::Error::InvalidArgument(error.what());
+    } catch (const std::exception& error) {
+      return xla_ffi::Error::Internal(error.what());
+    }
     return {};
   }
 
@@ -148,7 +156,14 @@ struct CustomCall {
     if (auto err = PopulateOutBuffers(rets, &out_arr); err.failure()) {
       return err;
     }
-    CC::Gpu(*obj, stream, in_arr, out_arr);
+    // Never let native validation exceptions cross the XLA C ABI.
+    try {
+      CC::Gpu(*obj, stream, in_arr, out_arr);
+    } catch (const std::invalid_argument& error) {
+      return xla_ffi::Error::InvalidArgument(error.what());
+    } catch (const std::exception& error) {
+      return xla_ffi::Error::Internal(error.what());
+    }
     return {};
   }
 

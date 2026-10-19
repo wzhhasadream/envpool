@@ -39,8 +39,8 @@
 #include <windows.h>
 #define ENVPOOL_HAS_WGL 1
 #elif defined(__linux__) && __has_include(<EGL/egl.h>)
-#include <dlfcn.h>
 #include <EGL/egl.h>
+#include <dlfcn.h>
 #if __has_include(<EGL/eglext.h>)
 #include <EGL/eglext.h>
 #define ENVPOOL_HAS_EGL_DEVICE_EXT 1
@@ -348,7 +348,8 @@ class EglContext final : public GlContext {
         throw std::runtime_error("failed to locate the loaded EGL library");
       }
       void* handle = dlopen(library.dli_fname, RTLD_NOW | RTLD_GLOBAL);
-      if (!handle) throw std::runtime_error("failed to expose the EGL entry point");
+      if (!handle)
+        throw std::runtime_error("failed to expose the EGL entry point");
       return handle;
     }();
     (void)egl_library;
@@ -648,6 +649,10 @@ OffscreenRenderer::OffscreenRenderer(CameraPolicy camera_policy,
   mjv_defaultOption(&option_);
   mjv_defaultPerturb(&perturb_);
   mjr_defaultContext(&context_);
+  if (camera_policy_ == CameraPolicy::kDmControl) {
+    // Match dm_control's MjvOption default, which hides rangefinder beams.
+    option_.flags[mjVIS_RANGEFINDER] = 0;
+  }
   if (disable_auxiliary_visuals) {
     option_.flags[mjVIS_TENDON] = 0;
     option_.flags[mjVIS_ACTUATOR] = 0;
@@ -698,6 +703,18 @@ void OffscreenRenderer::Initialize(const mjModel* model) {
 #endif
 }
 
+void OffscreenRenderer::UploadHeightField(const mjModel* model, int hfield_id) {
+  if (hfield_id < 0 || hfield_id >= model->nhfield) {
+    throw std::out_of_range("hfield_id is out of range");
+  }
+  if (!initialized_) {
+    return;
+  }
+  gl_context_->MakeCurrent();
+  mjr_uploadHField(model, &context_, hfield_id);
+  gl_context_->ClearCurrent();
+}
+
 void OffscreenRenderer::UpdateCamera(const mjModel* model, const mjData* data,
                                      int camera_id,
                                      const mjvCamera* camera_override) {
@@ -741,7 +758,8 @@ void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
                                int height, int camera_id, unsigned char* rgb,
                                const mjvCamera* camera_override,
                                const mjvOption* option_override,
-                               const mjvGeom* extra_geoms, int extra_geom_count) {
+                               const mjvGeom* extra_geoms,
+                               int extra_geom_count) {
   if (!initialized_) {
     Initialize(model);
   }
@@ -761,7 +779,8 @@ void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
     if (scene_.ngeom + extra_geom_count > scene_.maxgeom) {
       throw std::runtime_error("Extra render geometry exceeds scene capacity");
     }
-    for (int i = 0; i < extra_geom_count; ++i) scene_.geoms[scene_.ngeom++] = extra_geoms[i];
+    for (int i = 0; i < extra_geom_count; ++i)
+      scene_.geoms[scene_.ngeom++] = extra_geoms[i];
     mjr_render(viewport, &scene_, &context_);
   };
 

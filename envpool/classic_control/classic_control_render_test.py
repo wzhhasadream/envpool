@@ -98,7 +98,7 @@ class ClassicControlRenderTest(absltest.TestCase):
                         np.testing.assert_array_equal(frame0, frame0_again)
 
                         if step_idx + 1 < _RENDER_STEPS:
-                            env.step(_zero_action(env.action_space, 2))
+                            env.step(_zero_action(env.single_action_space, 2))
                 finally:
                     env.close()
 
@@ -132,7 +132,7 @@ class ClassicControlRenderTest(absltest.TestCase):
                         )
                         if step_idx + 1 < _RENDER_STEPS:
                             obs, _, _, _, info = env.step(
-                                _zero_action(env.action_space, 1)
+                                _zero_action(env.single_action_space, 1)
                             )
                 finally:
                     env.close()

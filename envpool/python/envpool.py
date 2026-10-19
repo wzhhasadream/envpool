@@ -222,7 +222,7 @@ class EnvPoolMixin(ABC):
 
     @property
     def is_async(self: EnvPool) -> bool:
-        """Return if this env is in sync mode or async mode."""
+        """Whether this env runs in asynchronous mode."""
         return (
             self.config["batch_size"] > 0
             and self.config["num_envs"] != self.config["batch_size"]
@@ -242,7 +242,13 @@ class EnvPoolMixin(ABC):
             int(getattr(self, "_render_env_id", 0)),
             int(getattr(self, "_render_width", 0)),
             int(getattr(self, "_render_height", 0)),
-            int(getattr(self, "_render_camera_id", -1)),
+            int(
+                getattr(
+                    self,
+                    "_render_camera_id",
+                    self.config.get("render_camera_id", -1),
+                )
+            ),
         )
 
     def _show_human_frame(self: EnvPool, frame: np.ndarray) -> None:

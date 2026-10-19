@@ -106,9 +106,9 @@ _install_imp_compat()
 class _Box2dEnvPoolCorrectnessTest(absltest.TestCase):
     def run_space_check(self, env0: gym.Env, env1: Any) -> None:
         """Check observation_space and action space."""
-        obs0, obs1 = env0.observation_space, env1.observation_space
+        obs0, obs1 = env0.observation_space, env1.single_observation_space
         self.assertEqual(obs0.shape, obs1.shape)
-        act0, act1 = env0.action_space, env1.action_space
+        act0, act1 = env0.action_space, env1.single_action_space
         if isinstance(act0, gym.spaces.Box):
             np.testing.assert_allclose(act0.low, act1.low)
             np.testing.assert_allclose(act0.high, act1.high)

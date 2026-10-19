@@ -100,10 +100,10 @@ class _ToyTextEnvTest(absltest.TestCase):
                 env = make_gymnasium("FrozenLake8x8-v1")
                 ref = gym.make("FrozenLake8x8-v1")
             logging.info(env)
-            assert isinstance(env.observation_space, gym.spaces.Discrete)
-            assert env.observation_space.n == size * size
-            assert isinstance(env.action_space, gym.spaces.Discrete)
-            assert env.action_space.n == 4
+            assert isinstance(env.single_observation_space, gym.spaces.Discrete)
+            assert env.single_observation_space.n == size * size
+            assert isinstance(env.single_action_space, gym.spaces.Discrete)
+            assert env.single_action_space.n == 4
             last_obs, _ = env.reset()
             elapsed_step = 0
             for _ in range(1000):
@@ -143,10 +143,10 @@ class _ToyTextEnvTest(absltest.TestCase):
     @no_type_check
     def test_taxi(self) -> None:
         env = make_gymnasium("Taxi-v3")
-        assert isinstance(env.observation_space, gym.spaces.Discrete)
-        assert env.observation_space.n == 500
-        assert isinstance(env.action_space, gym.spaces.Discrete)
-        assert env.action_space.n == 6
+        assert isinstance(env.single_observation_space, gym.spaces.Discrete)
+        assert env.single_observation_space.n == 500
+        assert isinstance(env.single_action_space, gym.spaces.Discrete)
+        assert env.single_action_space.n == 6
         ref = gym.make("Taxi-v3")
         for _ in range(10):
             # random agent
@@ -220,10 +220,10 @@ class _ToyTextEnvTest(absltest.TestCase):
     def test_nchain(self) -> None:
         num_envs = 100
         env = make_gymnasium("NChain-v0", num_envs=num_envs)
-        assert isinstance(env.observation_space, gym.spaces.Discrete)
-        assert env.observation_space.n == 5
-        assert isinstance(env.action_space, gym.spaces.Discrete)
-        assert env.action_space.n == 2
+        assert isinstance(env.single_observation_space, gym.spaces.Discrete)
+        assert env.single_observation_space.n == 5
+        assert isinstance(env.single_action_space, gym.spaces.Discrete)
+        assert env.single_action_space.n == 2
         done = [False]
         env.reset()
         reward = 0
@@ -238,10 +238,10 @@ class _ToyTextEnvTest(absltest.TestCase):
 
     def test_cliffwalking(self) -> None:
         env = make_gymnasium("CliffWalking-v1")
-        assert isinstance(env.observation_space, gym.spaces.Discrete)
-        assert env.observation_space.n == 48
-        assert isinstance(env.action_space, gym.spaces.Discrete)
-        assert env.action_space.n == 4
+        assert isinstance(env.single_observation_space, gym.spaces.Discrete)
+        assert env.single_observation_space.n == 48
+        assert isinstance(env.single_action_space, gym.spaces.Discrete)
+        assert env.single_action_space.n == 4
         ref = gym.make("CliffWalking-v1")
         for i in range(12):
             action = [0] * 4 + [1] * i + [2] * 4
@@ -309,10 +309,10 @@ class _ToyTextEnvTest(absltest.TestCase):
         np.random.seed(0)
         num_envs = 100
         env = make_gymnasium("Blackjack-v1", num_envs=num_envs)
-        assert isinstance(env.observation_space, gym.spaces.Box)
-        assert env.observation_space.shape == (3,)
-        assert isinstance(env.action_space, gym.spaces.Discrete)
-        assert env.action_space.n == 2
+        assert isinstance(env.single_observation_space, gym.spaces.Box)
+        assert env.single_observation_space.shape == (3,)
+        assert isinstance(env.single_action_space, gym.spaces.Discrete)
+        assert env.single_action_space.n == 2
         reward, rewards = np.zeros(num_envs), []
         for _ in range(1000):
             obs, rew, terminated, truncated, info = env.step(

@@ -55,6 +55,16 @@ py_library(
 )
 
 py_library(
+    name = "wrappers",
+    srcs = ["wrappers.py"],
+    imports = [".."],
+    deps = [
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_library(
     name = "envpool",
     srcs = ["__init__.py"],
     data = ["py.typed"],
@@ -62,6 +72,7 @@ py_library(
     deps = [
         ":entry",
         ":registration",
+        ":wrappers",
         "//envpool/atari",
         "//envpool/box2d",
         "//envpool/classic_control",
@@ -87,5 +98,42 @@ py_test(
     deps = [
         ":envpool",
         requirement("absl-py"),
+    ],
+)
+
+py_test(
+    name = "wrappers_test",
+    srcs = ["wrappers_test.py"],
+    imports = [".."],
+    deps = [
+        ":wrappers",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "wrappers_native_test",
+    timeout = "long",
+    srcs = ["wrappers_native_test.py"],
+    imports = [".."],
+    deps = [
+        ":registration",
+        ":wrappers",
+        "//envpool/atari",
+        "//envpool/atari:atari_registration",
+        "//envpool/mujoco:metaworld",
+        "//envpool/mujoco:metaworld_registration",
+        "//envpool/mujoco:mujoco_dmc",
+        "//envpool/mujoco:mujoco_dmc_registration",
+        "//envpool/mujoco:mujoco_gym",
+        "//envpool/mujoco:mujoco_gym_registration",
+        "//envpool/mujoco:myosuite",
+        "//envpool/mujoco:myosuite_registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("gymnasium"),
+        requirement("numpy"),
     ],
 )

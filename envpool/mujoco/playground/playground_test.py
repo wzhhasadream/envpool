@@ -276,7 +276,7 @@ class PlaygroundTest(absltest.TestCase):
                             obs_privileged.shape,
                             (2, _PRIVILEGED_STATE_SHAPES[task_id]),
                         )
-                    action = _zero_action(env.action_space, 2)
+                    action = _zero_action(env.single_action_space, 2)
                     obs, rew, term, trunc, info = env.step(action)
                     obs_state = _state_obs(obs)
                     self.assertEqual(
@@ -399,7 +399,7 @@ class PlaygroundTest(absltest.TestCase):
                 env1 = make_gymnasium(task_id, num_envs=2, seed=42)
                 env2 = make_gymnasium(task_id, num_envs=2, seed=43)
                 actions = _sample_actions(
-                    env0.action_space, rng, _DETERMINISM_STEPS, 2
+                    env0.single_action_space, rng, _DETERMINISM_STEPS, 2
                 )
                 try:
                     obs0, info0 = env0.reset()

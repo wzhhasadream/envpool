@@ -45,8 +45,8 @@ class _AtariPretrainTest(absltest.TestCase):
         delta: float | None = None,
     ) -> None:
         env = make_gym(task.capitalize() + "-v5", num_envs=num_envs, seed=seed)
-        state_shape = env.observation_space.shape
-        action_shape = env.action_space.n
+        state_shape = env.single_observation_space.shape
+        action_shape = env.single_action_space.n
         device = "cuda" if torch.cuda.is_available() else "cpu"
         np.random.seed(seed)
         torch.manual_seed(seed)

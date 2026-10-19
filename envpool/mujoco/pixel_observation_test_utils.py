@@ -158,7 +158,7 @@ def assert_frame_stack_rolls_in_channel_dimension(
             _assert_pixels_match(obs0[:, -3:], render0)
 
             prev_obs = obs0
-            action = _zero_action(env.action_space, 1)
+            action = _zero_action(env.single_action_space, 1)
             for _ in range(2):
                 obs, _, _, _, _ = env.step(action)
                 render = env.render(env_ids=[0])
@@ -205,7 +205,7 @@ def assert_pixel_env_preserves_gym_info_fields(test: absltest.TestCase) -> None:
         _, pixel_info = pixel_env.reset()
         _assert_nested_equal(state_info, pixel_info)
 
-        action = _zero_action(state_env.action_space, 1)
+        action = _zero_action(state_env.single_action_space, 1)
         _, _, _, _, state_info = state_env.step(action)
         _, _, _, _, pixel_info = pixel_env.step(action)
         _assert_nested_equal(state_info, pixel_info)
@@ -248,7 +248,7 @@ def assert_tasks_align_with_render_for_three_steps(
                 assert render is not None
                 _assert_pixels_match(obs, render)
 
-                action = _zero_action(env.action_space, 1)
+                action = _zero_action(env.single_action_space, 1)
                 for _ in range(NUM_STEPS):
                     obs, _, _, _, _ = env.step(action)
                     test.assertEqual(
@@ -393,7 +393,7 @@ for _ in range(2):
     obs, reward, term, trunc, info = pixels.recv()
     assert obs.shape == (2, 3, {RENDER_HEIGHT}, {RENDER_WIDTH}), obs.shape
 
-action = np.zeros((2,) + pixels.action_space.shape, dtype=np.float64)
+action = np.zeros((2,) + pixels.single_action_space.shape, dtype=np.float64)
 pairs = [
     np.asarray([0, 2], dtype=np.int32),
     np.asarray([1, 3], dtype=np.int32),

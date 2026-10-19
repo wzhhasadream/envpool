@@ -20,6 +20,7 @@ from typing import Any, cast
 import gymnasium
 import numpy as np
 import optree
+from gymnasium.vector.utils import batch_space
 
 from .data import gymnasium_structure
 from .envpool import EnvPoolMixin
@@ -74,7 +75,7 @@ def _env_ids_from_reset_options(
 
 
 class GymnasiumEnvPoolMixin:
-    """Special treatment for gymnasim API."""
+    """Gymnasium vector API with single and full-pool batched spaces."""
 
     metadata = (
         {
@@ -98,27 +99,37 @@ class GymnasiumEnvPoolMixin:
     @property
     def single_observation_space(
         self: Any,
-    ) -> gymnasium.Space | dict[str, Any]:
+    ) -> gymnasium.Space:
         """Single sub-environment observation space."""
-        return self.observation_space
+        if not hasattr(self, "_gym_single_observation_space"):
+            self._gym_single_observation_space = (
+                self.spec.gymnasium_observation_space
+            )
+        return self._gym_single_observation_space
 
     @property
-    def single_action_space(self: Any) -> gymnasium.Space | dict[str, Any]:
+    def single_action_space(self: Any) -> gymnasium.Space:
         """Single sub-environment action space."""
-        return self.action_space
+        if not hasattr(self, "_gym_single_action_space"):
+            self._gym_single_action_space = self.spec.gymnasium_action_space
+        return self._gym_single_action_space
 
     @property
-    def observation_space(self: Any) -> gymnasium.Space | dict[str, Any]:
-        """Observation space from EnvSpec."""
+    def observation_space(self: Any) -> gymnasium.Space:
+        """Full-pool observation space, always batched over ``num_envs``."""
         if not hasattr(self, "_gym_observation_space"):
-            self._gym_observation_space = self.spec.gymnasium_observation_space
+            self._gym_observation_space = batch_space(
+                self.single_observation_space, self.num_envs
+            )
         return self._gym_observation_space
 
     @property
-    def action_space(self: Any) -> gymnasium.Space | dict[str, Any]:
-        """Action space from EnvSpec."""
+    def action_space(self: Any) -> gymnasium.Space:
+        """Full-pool action space, always batched over ``num_envs``."""
         if not hasattr(self, "_gym_action_space"):
-            self._gym_action_space = self.spec.gymnasium_action_space
+            self._gym_action_space = batch_space(
+                self.single_action_space, self.num_envs
+            )
         return self._gym_action_space
 
     @property
@@ -217,7 +228,9 @@ class GymnasiumEnvPoolMeta(
             info = cast(dict[str, Any], state["info"])
             info["elapsed_step"] = state["elapsed_step"]
             obs = state["obs"]
-            if not isinstance(self.observation_space, gymnasium.spaces.Dict):
+            if not isinstance(
+                self.single_observation_space, gymnasium.spaces.Dict
+            ):
                 while isinstance(obs, dict) and len(obs) == 1:
                     obs = next(iter(obs.values()))
             if reset:

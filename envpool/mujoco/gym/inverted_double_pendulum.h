@@ -33,9 +33,9 @@ class InvertedDoublePendulumEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict(
         "reward_threshold"_.Bind(9100.0), "frame_skip"_.Bind(5),
-        "frame_stack"_.Bind(1), "post_constraint"_.Bind(true),
-        "healthy_reward"_.Bind(10.0), "reward_if_not_terminated"_.Bind(false),
-        "constraint_obs_dim"_.Bind(3),
+        "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+        "post_constraint"_.Bind(true), "healthy_reward"_.Bind(10.0),
+        "reward_if_not_terminated"_.Bind(false), "constraint_obs_dim"_.Bind(3),
         "xml_file"_.Bind(std::string("inverted_double_pendulum.xml")),
         "gymnasium_v5_render_camera"_.Bind(false), "healthy_z_max"_.Bind(1.0),
         "observation_min"_.Bind(-10.0), "observation_max"_.Bind(10.0),
@@ -43,17 +43,16 @@ class InvertedDoublePendulumEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     int obs_n = 1 + 2 + 2 + 3 + conf["constraint_obs_dim"_];
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
 #ifdef ENVPOOL_TEST
-    return MakeDict("obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
-                                          conf["frame_stack"_])),
                     "info:qpos0"_.Bind(Spec<mjtNum>({3})),
-                    "info:qvel0"_.Bind(Spec<mjtNum>({3})));
-#else
-    return MakeDict("obs"_.Bind(
-        StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}), conf["frame_stack"_])));
+                    "info:qvel0"_.Bind(Spec<mjtNum>({3})),
 #endif
+                    "obs"_.Bind(StackSpec(Spec<mjtNum>({obs_n}, {-inf, inf}),
+                                          conf["frame_stack"_])));
   }
   template <typename Config>
   static decltype(auto) ActionSpec(const Config& conf) {
@@ -95,7 +94,8 @@ class InvertedDoublePendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["max_episode_steps"_], spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         reward_if_not_terminated_(spec.config["reward_if_not_terminated"_]),
         constraint_obs_dim_(spec.config["constraint_obs_dim"_]),
         healthy_reward_(spec.config["healthy_reward"_]),
@@ -129,26 +129,35 @@ class InvertedDoublePendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   }
 
   void Step(const Action& action) override {
-    // step
-    MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
+    double reward_sum = 0.0;
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      MujocoStep(static_cast<mjtNum*>(action["action"_].Data()));
 
-    // dist_penalty
-    mjtNum x = data_->site_xpos[0];
-    mjtNum y = data_->site_xpos[2];
-    mjtNum dist_penalty = 0.01 * x * x + (y - 2) * (y - 2);
-    // vel_penalty
-    mjtNum v1 = data_->qvel[1];
-    mjtNum v2 = data_->qvel[2];
-    mjtNum vel_penalty = 1e-3 * v1 * v1 + 5e-3 * v2 * v2;
-    // reward and done
-    bool terminated = !IsHealthy();
-    mjtNum alive_bonus = reward_if_not_terminated_
-                             ? healthy_reward_ * static_cast<int>(!terminated)
-                             : healthy_reward_;
-    auto reward = static_cast<float>(alive_bonus - dist_penalty - vel_penalty);
-    ++elapsed_step_;
-    done_ = terminated || (elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, false);
+      // dist_penalty
+      mjtNum x = data_->site_xpos[0];
+      mjtNum y = data_->site_xpos[2];
+      mjtNum dist_penalty = 0.01 * x * x + (y - 2) * (y - 2);
+      // vel_penalty
+      mjtNum v1 = data_->qvel[1];
+      mjtNum v2 = data_->qvel[2];
+      mjtNum vel_penalty = 1e-3 * v1 * v1 + 5e-3 * v2 * v2;
+      // reward and done
+      bool terminated = !IsHealthy();
+      mjtNum alive_bonus = reward_if_not_terminated_
+                               ? healthy_reward_ * static_cast<int>(!terminated)
+                               : healthy_reward_;
+      auto reward =
+          static_cast<float>(alive_bonus - dist_penalty - vel_penalty);
+      ++elapsed_step_;
+      done_ = terminated || (elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), false);
+        break;
+      }
+    }
   }
 
  private:
@@ -157,6 +166,9 @@ class InvertedDoublePendulumEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   void WriteState(float reward, bool reset) {
     auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];

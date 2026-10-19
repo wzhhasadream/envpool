@@ -255,9 +255,11 @@ class _MakeTest(absltest.TestCase):
             self.assertIsInstance(env_gym, gymnasium.Env)
             self.assertIsInstance(env_dm, dm_env.Environment)
             self.assertEqual(spec.action_space.n, 18)
-            self.assertEqual(env_gym.action_space.n, 18)
+            self.assertEqual(env_gym.single_action_space.n, 18)
             self.assertEqual(env_dm.action_spec().num_values, 18)
-            self.assertEqual(env_gymnasium.action_space.n, 18)
+            self.assertEqual(env_gymnasium.single_action_space.n, 18)
+            self.assertEqual(env_gym.action_space.shape, (1,))
+            self.assertEqual(env_gymnasium.action_space.shape, (1,))
             # not work for wrong bin, see issue #146
             for wrong in ["Combat", "Joust", "MazeCraze", "Warlords"]:
                 self.assertRaises(

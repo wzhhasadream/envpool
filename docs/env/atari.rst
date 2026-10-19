@@ -1,8 +1,8 @@
 Atari
 =====
 
-We use ``ale_py==0.7.5`` as the codebase.
-See https://github.com/mgbellemare/Arcade-Learning-Environment/tree/v0.7.5
+We use the native Arcade Learning Environment ``0.11.2`` as the codebase.
+See https://github.com/Farama-Foundation/Arcade-Learning-Environment/tree/v0.11.2
 
 
 Render Compare
@@ -72,8 +72,12 @@ Options
   image resize, default to ``True``.
 * ``use_fire_reset (bool)``: whether to use ``fire-reset`` wrapper, default to
   ``True``.
-* ``full_action_space (bool)``: whether to use full action space of ALE of 18
-  actions, default to ``False``.
+* ``full_action_space (bool)``: whether to use the game's full legal ALE
+  action set, normally 18 actions, default to ``False``. It does not change
+  the continuous action space.
+* ``continuous (bool)``: use native continuous actions, default to ``False``.
+* ``continuous_action_threshold (float)``: continuous axis/fire threshold,
+  default to ``0.5``; any finite value is accepted.
 
 
 Observation Space
@@ -81,13 +85,158 @@ Observation Space
 
 The observation image size should be ``(stack_num, img_height, img_width)``,
 ``(4, 84, 84)`` by default. For a single frame, it has been gray-scaled and
-resized inside the c++ code.
+resized inside the c++ code. The existing native Atari pipeline retains the
+first 210 rows of ALE's image, including ROMs with taller original screens.
+Native default rendering also uses this 210-by-160 crop. Oracle pixel
+comparisons apply the same explicit crop to the original ALE image; the two
+APIs do not have identical raw screen shapes for those games. In the pinned
+ROM catalog, Adventure, AirRaid, KeystoneKapers, KingKong, Klax, LaserGates,
+MrDo, Pacman, SirLancelot, and SpaceWar have 250 rows; Carnival has 214,
+JourneyEscape has 230, and Pooyan has 220.
 
 
 Action Space
 ------------
 
-Each Atari games has its own discrete action space.
+Each Atari game has its own discrete action space by default. With
+``continuous=True``, every game instead exposes a float32 ``Box`` with shape
+``(3,)`` and bounds ``[0, -pi, 0]`` to ``[1, pi, 1]``. The components are
+joystick radius, joystick angle, and fire strength. Send batched actions with
+shape ``(batch_size, 3)``. Separate typed native bindings keep the existing
+integer action space unchanged when continuous mode is disabled.
+
+Continuous actions follow the pinned ALE ``0.11.2``
+`original Gymnasium wrapper conversion <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/python/env.py#L279-L300>`_
+and
+`direction mapping <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/python/env.py#L397-L453>`_.
+The radius also passes directly to ALE as paddle strength. Conversion happens
+once per external action; the same action and strength are used throughout
+frame skipping, with ALE's ordinary sticky-action behavior.
+
+That upstream version compares both sides of each Cartesian axis to the
+*positive* threshold, rather than using a symmetric dead zone. This behavior
+is preserved: at threshold ``0.5``, ``[0, 0, 0]`` means DOWNLEFT,
+``[1, 0, 0]`` means DOWNRIGHT, and ``[0.5, 0, 0.5]`` means DOWN. Fire is
+strictly greater than the threshold, so equality does not fire.
+
+There is a narrow numerical compatibility limitation: native float32
+``std::sin``/``std::cos`` and NumPy's float32 trigonometry can differ by one
+unit in the last place. If the resulting axis lies exactly at a threshold,
+that rounding can change the categorical ALE action. For example, with
+NumPy ``2.4.3`` on the tested SIMD build, float32
+``[0.6937808, 0.766001, 0]`` at threshold ``0.5`` produces DOWNRIGHT in
+upstream and DOWN in the native implementation. NumPy builds and platforms
+can differ. No epsilon or modified threshold is applied, and universal
+bitwise conversion parity at these boundaries is not claimed. A separate
+oracle characterization test records these cases without disguising the
+difference as a numerical tolerance.
+
+As a deliberate input-safety policy, native continuous pools reject
+non-finite or out-of-Box actions and non-finite thresholds. The original
+wrapper does not enforce those checks. Entire action batches are validated on
+the caller thread before any slot is queued, so an invalid action cannot
+partly advance a batch. All environment stepping remains native C++;
+``ale-py`` is used only by the isolated tests.
+
+
+Native Multi-Game Pools
+-----------------------
+
+``make_multitask`` can mix Atari games in one native ``AsyncEnvPool``. Each
+slot keeps its assigned game across resets and owns an independent ALE emulator,
+random generator, frame stack, lives, rewards, and episode counter. The games
+share one worker pool and send/receive queue.
+
+.. code-block:: python
+
+    import envpool
+
+    env = envpool.make_multitask(
+        ["Pong-v5", "Breakout-v5", "SpaceInvaders-v5"],
+        env_type="gymnasium",
+        envs_per_task=[2, 3, 1],
+        seed=[10, 11, 20, 21, 22, 30],
+        batch_size=2,
+        num_threads=3,
+        full_action_space=True,
+    )
+    env.async_reset()
+    obs, reward, terminated, truncated, info = env.recv()
+    # Route the next actions using info["env_id"] in asynchronous mode.
+    # info["task_id"] identifies the game independently of receive order.
+
+Discrete mixed pools use the canonical 18-action ALE space; the helper enables
+``full_action_space=True`` by default and rejects an explicit ``False``.
+Equal minimal-action counts would not guarantee that action indices have the
+same meaning in different games. ``LostLuggage-v5`` and ``Skiing-v5`` are
+rejected from discrete mixed pools: ALE excludes FIRE variants from their legal spaces,
+leaving nine legal actions. This follows the pinned
+`LostLuggage action check <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/games/supported/LostLuggage.cpp#L65-L80>`_
+and
+`Skiing action check <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/games/supported/Skiing.cpp#L60-L75>`_.
+LostLuggage explicitly
+`documents that FIRE restarts the game <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/games/supported/LostLuggage.hpp#L47-L48>`_.
+Validation checks every selected game's actual ALE action values and ordering,
+not a hardcoded game-name exclusion. Ordinary ``make`` calls retain each
+game's minimal action space by default, and both games keep their existing
+single-game behavior.
+
+Continuous mixed pools support all 104 registered games, including
+``LostLuggage-v5`` and ``Skiing-v5``, because they share the same three-value
+Box. ``full_action_space`` does not restrict this mode. As in the original
+wrapper, the converted action is passed directly to ALE; ALE maps forbidden
+FIRE variants in those two games to NOOP. This follows its
+`illegal-action handling <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/environment/stella_environment.cpp#L141-L146>`_.
+For example:
+
+.. code-block:: python
+
+    env = envpool.make_multitask(
+        ["Pong-v5", "Breakout-v5", "LostLuggage-v5", "Skiing-v5"],
+        continuous=True,
+        envs_per_task=2,
+    )
+
+All slots share preprocessing settings, including resolution, color mode,
+stacking, frame skipping, reward clipping, life-loss handling, random no-ops,
+fire reset, sticky-action probability, mode, and difficulty. A selected mode or
+difficulty must be valid for every game. Compatible complete observation and
+action specs are checked before the pool is created. ``max_episode_steps`` is
+measured in calls to ``step``, after the configured frame skipping.
+
+``info["task_id"]`` (or ``timestep.observation.task_id`` with the dm_env API)
+is a canonical integer from the sorted single-player ROM catalog pinned to ALE
+``0.11.2``. Its value is independent of the requested games, their ordering,
+slot counts, resets, and asynchronous completion order. ``env.task_ids`` lists
+the requested public task names; ``env.env_task_ids`` lists the assigned public
+name for every slot, in ``env_id`` order. Task IDs are also available in
+ordinary single-game pools. The catalog is generated from the official ALE
+ROM manifest by ``third_party/ale/generate_task_catalog.py``.
+This native task-mapping contract is scoped to the 104 official registered
+ROM names, including ordinary single-game pools. Unknown/custom ROM filenames
+are rejected rather than assigned an unstable task ID; custom ROM registration
+is not part of this catalog contract.
+
+The native configuration fields ``env_task_names`` and
+``env_max_episode_steps`` accept one ROM name and one positive episode limit
+per slot. Empty vectors retain the scalar ``task`` and
+``max_episode_steps`` behavior. Supplying ``env_task_names`` directly also
+requires ``full_action_space=True`` in discrete mode. Most callers should use
+``make_multitask`` to validate and expand the public registered task names.
+
+The multitask regression suite compares observations, rewards, termination,
+truncation, RAM, lives, elapsed steps, and rendered frames bitwise against
+independently seeded single-game pools. It covers all 102 games with a
+canonical 18-action space, verifies rejection and unchanged single-game
+behavior for the two incompatible games, and tests partial resets,
+asynchronous batches, different slot horizons, preprocessing options, and
+sticky actions. The continuous suite additionally checks all 104 games
+against the original ``ale-py==0.11.2`` Gymnasium wrapper, with pinned
+Python 3.12, Gymnasium ``1.2.3``, and NumPy ``2.4.3`` in a test-only subprocess.
+It compares raw RGB, RAM, rewards, lives, termination, truncation, and rendered
+frames with no state synchronization after initial bootstrap alignment, plus
+long paddle/FIRE trajectories. Wrapper combinations and asynchronous routing
+are compared against independently seeded native single-game pools.
 
 
 Available Tasks

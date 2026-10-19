@@ -1,6 +1,9 @@
 DeepMind Control Suite
 ======================
 
+For native ``action_repeat`` configuration and stepping semantics, see
+:doc:`mujoco_action_repeat`.
+
 We use ``dm_control==1.0.38`` and ``mujoco==3.6.0`` as the codebase.
 See https://github.com/deepmind/dm_control/tree/1.0.38 and
 https://github.com/google-deepmind/mujoco/tree/3.6.0
@@ -22,6 +25,71 @@ converted into ``DomainNameTaskName-v1`` in envpool, e.g.,
 EnvPool implements the ``suite.ALL_TASKS`` task set from
 ``dm_control==1.0.38``.
 
+
+Dynamics and pixel-camera configuration
+---------------------------------------
+
+``friction_multiplier`` defaults to 1.0 and must be finite and nonnegative.
+It scales the model's original sliding, torsional, and rolling geometry
+friction once at creation. Explicit contact-pair friction coefficients are
+also scaled, because they override geometry friction. Reset does not compound
+the multiplier. This is a contact-friction multiplier, not a replacement for
+MuJoCo's joint damping, joint friction loss, or solver parameters.
+
+.. code-block:: python
+
+   env = envpool.make_gymnasium(
+       "QuadrupedWalk-v1", num_envs=16,
+       from_pixels=True, action_repeat=3, frame_stack=3,
+       friction_multiplier=0.5,
+   )
+
+DMC pixel observations default to fixed camera 2 for Quadruped and fixed
+camera 0 for all other domains, including Cheetah. This follows
+`ApexRL's DMC adapter
+<https://github.com/wzhhasadream/ApexRL/blob/bb4c8899164237d2a4e27b3bcd8e32b4b6c2c332/envs/dmc.py>`_.
+An explicit ``render_camera_id`` still overrides the domain default;
+``render_camera_id=-1`` selects the free camera. Existing rendering dimensions
+and their configuration are unchanged.
+
+ApexRL's pixel path applies action repeat before rendering and frame stacking.
+The native path does the same. Both produce RGB bytes without cropping or
+normalization, but their layouts differ: ApexRL uses ``[B, F, H, W, C]`` and
+EnvPool uses ``[B, 3 * F, H, W]``. Convert Apex frames with
+``frames.transpose(0, 1, 4, 2, 3).reshape(B, 3 * F, H, W)`` before comparing.
+ApexRL's vector wrapper uses same-step autoreset; EnvPool retains next-step
+autoreset. Compare terminal observations before applying that wrapper-level
+reset convention. ApexRL's current friction wrapper scales geometry friction
+only; native ``friction_multiplier`` additionally covers explicit pairs.
+
+Compatibility with the original library
+---------------------------------------
+
+The native implementation targets the pinned versions above. An identical
+integer seed does not produce an identical reset across libraries: EnvPool
+uses C++ random-number distributions and the original library uses NumPy.
+Oracle comparisons synchronize the initial physics and task-specific state
+once after reset, then compare trajectories driven by the same external
+actions without further synchronization.
+
+EnvPool publishes float32 rewards. The original ``dm_env`` reset timestep
+uses ``reward=None`` and ``discount=None``; EnvPool's batched FIRST timestep
+uses reward 0 and discount 1. Some native task families retain historical
+observation-key supersets, including Finger, Fish, and Humanoid variants.
+These API differences are separate from physics and per-step reward parity.
+
+QuadrupedEscape has a known reset-distribution difference: native terrain uses
+independent bumps on a 201-by-201 grid, while the original samples a 30-by-30
+grid and upsamples it with cubic interpolation. Same-state oracle comparisons
+synchronize the heightfield and therefore do not establish equivalent terrain
+distributions. This difference is not resolved by matching integer seeds.
+
+Native action bounds follow the original actuator limits. ApexRL can wrap
+those limits with ``RescaleAction(-1, 1)``, so normalized Apex actions must be
+rescaled before comparing native/original trajectories. This matters for
+Quadruped, whose actuator bounds are not uniformly ``[-1, 1]``. Native LQR
+registrations retain the 1000-control-step horizon used by ApexRL's outer
+TimeLimit; raw ``suite.load`` LQR instead defaults to an infinite horizon.
 
 Render Compare
 --------------
@@ -57,7 +125,7 @@ BallInCupCatch-v1
 - Observation spec: a namedtuple with two keys: ``position (4)`` and
   ``velocity (4)``;
 - Action spec: ``(2)``, with range ``[-1, 1]``;
-- ``frame_skip``: 1;
+- ``frame_skip``: 10;
 - ``max_episode_steps``: 1000;
 
 

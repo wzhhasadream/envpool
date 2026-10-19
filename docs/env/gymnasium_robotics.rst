@@ -237,7 +237,7 @@ Examples
 
     env = envpool.make_gymnasium("FetchReach-v4", num_envs=4, seed=0)
     obs, info = env.reset()
-    obs, rew, term, trunc, info = env.step(env.action_space.sample()[None, :].repeat(4, axis=0))
+    obs, rew, term, trunc, info = env.step(env.action_space.sample())
     frame = env.render()
     env.close()
 

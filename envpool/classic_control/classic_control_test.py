@@ -26,8 +26,8 @@ from envpool.registration import make_gym
 class _ClassicControlEnvPoolTest(absltest.TestCase):
     @no_type_check
     def run_space_check(self, env0: gym.Env, env1: Any) -> None:
-        """Check if envpool.observation_space == gym.make().observation_space."""
-        obs0, obs1 = env0.observation_space, env1.observation_space
+        """Check the per-slot observation space against Gymnasium."""
+        obs0, obs1 = env0.observation_space, env1.single_observation_space
         np.testing.assert_allclose(obs0.low, obs1.low)
         np.testing.assert_allclose(obs0.high, obs1.high)
 
@@ -45,7 +45,7 @@ class _ClassicControlEnvPoolTest(absltest.TestCase):
         obs_space = env0.observation_space
         obs_min, obs_max = obs_space.low - eps, obs_space.high + eps
         for _ in range(5000):
-            action = np.array([act_space.sample() for _ in range(num_envs)])
+            action = act_space.sample()
             obs0 = env0.step(action)[0]
             obs1 = env1.step(action)[0]
             obs2 = env2.step(action)[0]
@@ -87,8 +87,11 @@ class _ClassicControlEnvPoolTest(absltest.TestCase):
         env = make_gym("CartPole-v1", num_envs=num_envs)
         self.assertEqual(env.num_envs, num_envs)
         self.assertTrue(env.is_vector_env)
-        self.assertIs(env.single_observation_space, env.observation_space)
-        self.assertIs(env.single_action_space, env.action_space)
+        self.assertEqual(env.single_observation_space.shape, (4,))
+        self.assertEqual(env.observation_space.shape, (num_envs, 4))
+        self.assertEqual(env.single_action_space.n, 2)
+        self.assertEqual(env.action_space.shape, (num_envs,))
+        np.testing.assert_array_equal(env.action_space.nvec, [2] * num_envs)
         if hasattr(gym, "vector") and hasattr(gym.vector, "VectorEnv"):
             self.assertIsInstance(env, gym.vector.VectorEnv)
 

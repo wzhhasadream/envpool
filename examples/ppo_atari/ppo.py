@@ -359,8 +359,8 @@ if __name__ == "__main__":
         reward_clip=False,
         # thread_affinity=False,
     )
-    state_n = np.prod(train_envs.observation_space.shape)
-    action_n = train_envs.action_space.n
+    state_n = np.prod(train_envs.single_observation_space.shape)
+    action_n = train_envs.single_action_space.n
     actor_critic = nn.DataParallel(CnnActorCritic(action_n).cuda())
     # actor_critic = nn.DataParallel(MlpActorCritic(state_n, action_n).cuda())
     optim = torch.optim.Adam(actor_critic.parameters(), lr=args.lr)

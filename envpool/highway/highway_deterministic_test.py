@@ -61,9 +61,12 @@ def _assert_tree_equal(actual: Any, expected: Any) -> None:
 def _idle_action(env: Any, task_id: str, num_envs: int) -> np.ndarray:
     if task_id.startswith("IntersectionMultiAgent"):
         return np.ones(2 * num_envs, dtype=np.int32)
-    if hasattr(env.action_space, "n"):
+    if hasattr(env.single_action_space, "n"):
         return np.ones(num_envs, dtype=np.int32)
-    return np.zeros((num_envs, *env.action_space.shape), env.action_space.dtype)
+    return np.zeros(
+        (num_envs, *env.single_action_space.shape),
+        env.single_action_space.dtype,
+    )
 
 
 def _step(env: Any, task_id: str, action: np.ndarray, num_envs: int) -> Any:
@@ -89,7 +92,9 @@ class _HighwayDeterministicTest(absltest.TestCase):
             env1.reset()
             env2.reset()
             for _ in range(num_steps):
-                action = rng.integers(0, env0.action_space.n, size=num_envs)
+                action = rng.integers(
+                    0, env0.single_action_space.n, size=num_envs
+                )
                 obs0, rew0, term0, trunc0, info0 = env0.step(action)
                 obs1, rew1, term1, trunc1, info1 = env1.step(action)
                 obs2, rew2, term2, trunc2, info2 = env2.step(action)

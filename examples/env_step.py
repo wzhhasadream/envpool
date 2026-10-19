@@ -23,7 +23,7 @@ def gym_sync_step() -> None:
     """Run the synchronous Gym stepping example."""
     num_envs = 4
     env = envpool.make_gym("Pong-v5", num_envs=num_envs)
-    action_num = env.action_space.n
+    action_num = env.single_action_space.n
     obs, _ = env.reset()  # reset all envs
     assert obs.shape == (num_envs, 4, 84, 84)
     for _ in range(1000):

@@ -51,19 +51,74 @@ batched environments:
   / ``frame_skip`` / ``noop_max`` in Atari env, ``reward_metric`` /
   ``lmp_save_dir`` in ViZDoom env, please refer to the corresponding pages.
 
-The observation space and action space of resulted environment describe a
-single environment's space, but each time the observation/action's first
-dimension is always equal to ``num_envs``
-(sync mode) or equal to ``batch_size`` (async mode).
-For Gymnasium compatibility, the Gymnasium wrapper also exposes
-``num_envs``, ``is_vector_env``, ``single_observation_space``, and
-``single_action_space`` for vector-aware wrappers such as Gymnasium's vector
-``NormalizeObservation``. EnvPool keeps ``observation_space`` and
-``action_space`` as the single-environment spaces for backward compatibility.
+Gymnasium pools expose the standard vector-environment spaces:
+
+* ``single_observation_space`` and ``single_action_space`` describe one
+  environment, using the original ``EnvSpec`` spaces;
+* ``observation_space`` and ``action_space`` describe the full ``num_envs``
+  batch, using Gymnasium's ``batch_space``. A single ``Discrete(n)`` action
+  becomes ``MultiDiscrete([n] * num_envs)``; a single ``Box`` with shape
+  ``(A,)`` becomes a ``Box`` with shape ``(num_envs, A)``. ``Dict`` spaces
+  retain their keys and batch each leaf;
+* ``num_envs`` and ``is_vector_env`` identify the vector environment.
+
+Gymnasium may normalize ``Dict`` key order when batching. Flatten observations
+using their corresponding space rather than assuming that the single and
+batched spaces have identical key iteration order.
+
+For a full synchronous single-player step, use the sampled batch directly:
+
+.. code-block:: python
+
+    env = envpool.make_gymnasium("HalfCheetah-v4", num_envs=4)
+    obs, info = env.reset()
+    obs, reward, terminated, truncated, info = env.step(
+        env.action_space.sample()
+    )
+
+The spaces always describe ``num_envs`` slots, even when ``batch_size`` is
+smaller or an explicit subset of IDs is reset or stepped. Such results have a
+variable leading batch dimension and are an EnvPool extension to Gymnasium's
+full-vector interface. Route subsequent actions with ``info["env_id"]`` and
+construct a matching action batch. A full ``action_space.sample()`` is not a
+partial-receive sample:
+
+.. code-block:: python
+
+    from gymnasium.vector.utils import batch_space
+
+    env = envpool.make_gymnasium(
+        "HalfCheetah-v4", num_envs=8, batch_size=4
+    )
+    env.async_reset()
+    obs, reward, terminated, truncated, info = env.recv()
+    env_ids = info["env_id"]
+    actions = batch_space(env.single_action_space, len(env_ids)).sample()
+    env.send(actions, env_ids)
+
+When migrating code that previously read a pool's ``action_space.n``, used its
+single-action shape, or manually stacked one sample per slot, read
+``single_action_space`` instead. Likewise, read ``single_observation_space``
+when constructing a model for one observation. ``make_spec`` spaces and
+``dm_env`` specs remain single-environment specifications.
+
+Multi-player environments are also an EnvPool extension: their native
+per-player fields can have a dynamic leading player count rather than
+``num_envs``. The static Gymnasium spaces do not represent these ragged
+batches. Use the native ``info["players"]["env_id"]`` mapping and explicit
+player action routing for those environments; do not assume a full-pool
+space sample contains the required number of player actions.
 
 ``envpool.make_gym``, ``envpool.make_dm``, and ``envpool.make_gymnasium`` are
 shortcuts for ``envpool.make(..., env_type="gym" | "dm" | "gymnasium")``,
 respectively.
+
+Optional Gymnasium adapters
+---------------------------
+
+For explicit same-step autoreset and ``[B, F, H, W, C]`` pixel observations,
+see :doc:`gymnasium_wrappers`. These wrappers preserve the default native API
+and can be composed in either order.
 
 envpool.make_spec
 -----------------

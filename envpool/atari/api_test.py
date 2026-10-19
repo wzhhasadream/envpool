@@ -21,7 +21,7 @@ import numpy as np
 from absl import logging
 from absl.testing import absltest
 
-import envpool.atari.registration  # noqa: F401
+import envpool.atari.registration as reg
 from envpool.atari import AtariEnvSpec
 from envpool.registration import make_dm, make_gym, make_spec
 
@@ -228,8 +228,13 @@ class _GymSyncTest(absltest.TestCase):
             self.assertIsInstance(env, gym.Env)
             logging.info(env)
             # check gym space
-            gym_obs_space: gym.spaces.Box = env.observation_space
-            gym_act_space: gym.spaces.Discrete = env.action_space
+            gym_obs_space: gym.spaces.Box = env.single_observation_space
+            gym_act_space: gym.spaces.Discrete = env.single_action_space
+            self.assertEqual(
+                env.observation_space.shape, (1, *gym_obs_space.shape)
+            )
+            self.assertEqual(env.action_space.shape, (1,))
+            np.testing.assert_array_equal(env.action_space.nvec, [action_num])
             self.assertEqual(len(env.spec.action_array_spec), 3)
             self.assertIsInstance(gym_obs_space, gym.spaces.Box)
             self.assertEqual(gym_obs_space.dtype, np.uint8)
@@ -246,7 +251,7 @@ class _GymSyncTest(absltest.TestCase):
             action2 = env.action_space.sample()
             env.action_space.seed(2)
             action3 = env.action_space.sample()
-            self.assertEqual(action2, action3)
+            np.testing.assert_array_equal(action2, action3)
 
     def test_lowlevel_step(self) -> None:
         num_envs = 4
@@ -266,7 +271,25 @@ class _GymSyncTest(absltest.TestCase):
         self.assertEqual(terminated.dtype, np.bool_)
         self.assertEqual(truncated.dtype, np.bool_)
         self.assertIsInstance(info, dict)
-        self.assertEqual(len(info), 7)
+        self.assertCountEqual(
+            info,
+            {
+                "env_id",
+                "players",
+                "lives",
+                "reward",
+                "terminated",
+                "ram",
+                "elapsed_step",
+                "task_id",
+            },
+        )
+        self.assertEqual(info["task_id"].dtype, np.int32)
+        self.assertEqual(info["task_id"].shape, (num_envs,))
+        np.testing.assert_array_equal(
+            info["task_id"],
+            np.full(num_envs, reg.atari_game_list.index("breakout")),
+        )
         self.assertEqual(info["env_id"].dtype, np.int32)
         self.assertEqual(info["lives"].dtype, np.int32)
         self.assertEqual(info["ram"].dtype, np.uint8)
@@ -277,10 +300,12 @@ class _GymSyncTest(absltest.TestCase):
         np.testing.assert_allclose(info["players"]["env_id"].shape, (num_envs,))
         np.testing.assert_allclose(truncated.shape, (num_envs,))
         while not np.any(done):
-            env.send(np.random.randint(6, size=num_envs))
+            env.send(
+                np.random.randint(env.single_action_space.n, size=num_envs)
+            )
             obs, rew, terminated, truncated, info = env.recv()
             done = np.logical_or(terminated, truncated)
-        env.send(np.random.randint(6, size=num_envs))
+        env.send(np.random.randint(env.single_action_space.n, size=num_envs))
         obs1, rew1, terminated1, truncated1, info1 = env.recv()
         done1 = np.logical_or(terminated1, truncated1)
         index = np.where(done)[0]
@@ -306,7 +331,25 @@ class _GymSyncTest(absltest.TestCase):
         np.testing.assert_allclose(done.shape, (num_envs,))
         self.assertEqual(done.dtype, np.bool_)
         self.assertIsInstance(info, dict)
-        self.assertEqual(len(info), 7)
+        self.assertCountEqual(
+            info,
+            {
+                "env_id",
+                "players",
+                "lives",
+                "reward",
+                "terminated",
+                "ram",
+                "elapsed_step",
+                "task_id",
+            },
+        )
+        self.assertEqual(info["task_id"].dtype, np.int32)
+        self.assertEqual(info["task_id"].shape, (num_envs,))
+        np.testing.assert_array_equal(
+            info["task_id"],
+            np.full(num_envs, reg.atari_game_list.index("pong")),
+        )
         self.assertEqual(info["env_id"].dtype, np.int32)
         self.assertEqual(info["lives"].dtype, np.int32)
         self.assertEqual(info["ram"].dtype, np.uint8)

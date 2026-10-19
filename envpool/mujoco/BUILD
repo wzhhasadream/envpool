@@ -340,6 +340,7 @@ cc_library(
     data = [":gen_metaworld_assets"],
     deps = [
         ":robotics_env",
+        ":metaworld_action_utils",
         "//envpool/core:async_envpool",
     ],
 )
@@ -365,6 +366,7 @@ cc_library(
     data = [":gen_myosuite_assets"],
     deps = [
         ":mujoco_render",
+        ":myosuite_reward_utils",
         ":robotics_env",
         "//envpool/core:async_envpool",
         "//third_party/myosuite:myosuite_tasks",
@@ -1068,5 +1070,141 @@ py_test(
         requirement("gymnasium-robotics"),
         requirement("mujoco"),
         requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "action_repeat_test",
+    size = "enormous",
+    srcs = ["action_repeat_test.py"],
+    imports = ["../.."],
+    shard_count = 8,
+    deps = [
+        ":metaworld",
+        ":metaworld_registration",
+        ":mujoco_dmc",
+        ":mujoco_dmc_registration",
+        ":mujoco_gym",
+        ":mujoco_gym_registration",
+        ":myosuite",
+        ":myosuite_registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("numpy"),
+    ],
+)
+
+cc_test(
+    name = "dmc_friction_multiplier_test",
+    size = "small",
+    srcs = ["dmc/friction_multiplier_test.cc"],
+    deps = [
+        ":mujoco_dmc_env",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "dmc_multitask_test",
+    size = "medium",
+    srcs = ["dmc/multitask_test.cc"],
+    deps = [
+        ":mujoco_dmc_env",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+py_test(
+    name = "dmc_multitask_test_python",
+    size = "large",
+    srcs = ["dmc/multitask_test.py"],
+    main = "dmc/multitask_test.py",
+    imports = ["../.."],
+    deps = [
+        ":mujoco_dmc",
+        ":mujoco_dmc_registration",
+        "//envpool:registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "myosuite_success_info_test",
+    size = "large",
+    srcs = ["myosuite/success_info_test.py"],
+    main = "myosuite/success_info_test.py",
+    imports = ["../.."],
+    deps = [
+        ":myosuite",
+        ":myosuite_registration",
+        ":myosuite_task_metadata",
+        "//envpool:registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "myosuite_multitask_test",
+    size = "large",
+    srcs = ["myosuite/multitask_test.py"],
+    main = "myosuite/multitask_test.py",
+    imports = ["../.."],
+    deps = [
+        ":myosuite",
+        ":myosuite_registration",
+        "//envpool:registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("numpy"),
+    ],
+)
+
+py_test(
+    name = "metaworld_multitask_test",
+    size = "large",
+    srcs = ["metaworld/multitask_test.py"],
+    main = "metaworld/multitask_test.py",
+    imports = ["../.."],
+    deps = [
+        ":metaworld",
+        ":metaworld_registration",
+        "//envpool:registration",
+        "//envpool/python:glfw_context",
+        requirement("absl-py"),
+        requirement("numpy"),
+    ],
+)
+
+cc_library(
+    name = "myosuite_reward_utils",
+    hdrs = ["myosuite/reward_utils.h"],
+)
+
+cc_test(
+    name = "myosuite_reward_utils_test",
+    size = "small",
+    srcs = ["myosuite/reward_utils_test.cc"],
+    deps = [
+        ":myosuite_reward_utils",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "metaworld_action_utils",
+    hdrs = ["metaworld/action_utils.h"],
+)
+
+cc_test(
+    name = "metaworld_action_utils_test",
+    size = "small",
+    srcs = ["metaworld/action_utils_test.cc"],
+    deps = [
+        ":metaworld_action_utils",
+        "@com_google_googletest//:gtest_main",
     ],
 )

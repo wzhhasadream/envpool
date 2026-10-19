@@ -111,7 +111,7 @@ class JumanjiRegistryTest(absltest.TestCase):
                         env_ids=np.asarray([0, 1], dtype=np.int32)
                     )
                     _assert_render_batch(reset_frame, 2)
-                    action = _zeros_action(env.action_space, 2)
+                    action = _zeros_action(env.single_action_space, 2)
                     obs, reward, terminated, truncated, info = env.step(action)
                     _assert_obs_batch(obs, 2)
                     self.assertEqual(np.asarray(reward).shape, (2,))

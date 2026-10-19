@@ -32,7 +32,8 @@ class HalfCheetahEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("reward_threshold"_.Bind(4800.0), "frame_skip"_.Bind(5),
-                    "frame_stack"_.Bind(1), "post_constraint"_.Bind(true),
+                    "frame_stack"_.Bind(1), "action_repeat"_.Bind(1),
+                    "post_constraint"_.Bind(true),
                     "exclude_current_positions_from_observation"_.Bind(true),
                     "xml_file"_.Bind(std::string("half_cheetah.xml")),
                     "gymnasium_v5_render_camera"_.Bind(false),
@@ -42,9 +43,11 @@ class HalfCheetahEnvFns {
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
     mjtNum inf = std::numeric_limits<mjtNum>::infinity();
     bool no_pos = conf["exclude_current_positions_from_observation"_];
     return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
         "obs"_.Bind(StackSpec(Spec<mjtNum>({no_pos ? 17 : 18}, {-inf, inf}),
                               conf["frame_stack"_])),
 #ifdef ENVPOOL_TEST
@@ -93,7 +96,8 @@ class HalfCheetahEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["max_episode_steps"_], spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_]),
         no_pos_(spec.config["exclude_current_positions_from_observation"_]),
         gymnasium_v5_render_camera_(spec.config["gymnasium_v5_render_camera"_]),
         ctrl_cost_weight_(spec.config["ctrl_cost_weight"_]),
@@ -134,24 +138,33 @@ class HalfCheetahEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   }
 
   void Step(const Action& action) override {
-    // step
+    double reward_sum = 0.0;
     auto* act = static_cast<mjtNum*>(action["action"_].Data());
-    mjtNum x_before = data_->qpos[0];
-    MujocoStep(act);
-    mjtNum x_after = data_->qpos[0];
+    for (int repeat = 0; repeat < action_repeat_; ++repeat) {
+      // step
+      mjtNum x_before = data_->qpos[0];
+      MujocoStep(act);
+      mjtNum x_after = data_->qpos[0];
 
-    // ctrl_cost
-    mjtNum ctrl_cost = 0.0;
-    for (int i = 0; i < model_->nu; ++i) {
-      ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      // ctrl_cost
+      mjtNum ctrl_cost = 0.0;
+      for (int i = 0; i < model_->nu; ++i) {
+        ctrl_cost += ctrl_cost_weight_ * act[i] * act[i];
+      }
+      // xv
+      mjtNum dt = frame_skip_ * model_->opt.timestep;
+      mjtNum xv = (x_after - x_before) / dt;
+      // reward and done
+      auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
+      done_ = (++elapsed_step_ >= max_episode_steps_);
+      per_timestep_reward_ = reward;
+      reward_sum += reward;
+      if (done_ || repeat + 1 == action_repeat_) {
+        WriteState(static_cast<float>(reward_sum), xv, ctrl_cost, x_after,
+                   false);
+        break;
+      }
     }
-    // xv
-    mjtNum dt = frame_skip_ * model_->opt.timestep;
-    mjtNum xv = (x_after - x_before) / dt;
-    // reward and done
-    auto reward = static_cast<float>(xv * forward_reward_weight_ - ctrl_cost);
-    done_ = (++elapsed_step_ >= max_episode_steps_);
-    WriteState(reward, xv, ctrl_cost, x_after, false);
   }
 
  private:
@@ -159,6 +172,9 @@ class HalfCheetahEnvBase : public Env<EnvSpecT>, public MujocoEnv {
                   bool reset) {
     auto state = Allocate();
     state["reward"_] = reward;
+    state["info:per_timestep_reward"_] = reset ? 0.0f : per_timestep_reward_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     // obs
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];

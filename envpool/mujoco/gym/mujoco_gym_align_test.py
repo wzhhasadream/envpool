@@ -101,10 +101,10 @@ class _MujocoGymAlignTest(absltest.TestCase):
     def run_space_check(self, env0: gym.Env, env1: Any) -> None:
         """Check observation_space and action space."""
         """Check observation_space and action space."""
-        obs0, obs1 = env0.observation_space, env1.observation_space
+        obs0, obs1 = env0.observation_space, env1.single_observation_space
         np.testing.assert_allclose(obs0.low, obs1.low)
         np.testing.assert_allclose(obs0.high, obs1.high)
-        act0, act1 = env0.action_space, env1.action_space
+        act0, act1 = env0.action_space, env1.single_action_space
         np.testing.assert_allclose(act0.low, act1.low)
         np.testing.assert_allclose(act0.high, act1.high)
 

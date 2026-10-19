@@ -106,7 +106,7 @@ class EnvRegistry:
         kwargs: dict[str, Any],
     ) -> tuple[bool, dict[str, Any], bool]:
         from_pixels = bool(kwargs.pop("from_pixels", False))
-        wrapper_kwargs = {
+        wrapper_kwargs: dict[str, Any] = {
             key: kwargs.pop(key)
             for key in ("render_mode", "render_env_id")
             if key in kwargs
@@ -169,9 +169,15 @@ class EnvRegistry:
         }
 
     def _resolve_spec_entry(
-        self, task_id: str, from_pixels: bool
+        self, task_id: str, from_pixels: bool, *, continuous: bool = False
     ) -> tuple[str, str, dict[str, Any]]:
         import_path, spec_cls, kwargs = self.specs[task_id]
+        if continuous:
+            if import_path != "envpool.atari":
+                raise ValueError(
+                    "continuous=True is only supported for Atari tasks"
+                )
+            spec_cls = "AtariContinuousEnvSpec"
         if from_pixels:
             if not self._pixel_variant_supported(import_path):
                 raise ValueError(
@@ -181,9 +187,23 @@ class EnvRegistry:
         return import_path, spec_cls, dict(kwargs)
 
     def _resolve_envpool_entry(
-        self, task_id: str, env_type: str, from_pixels: bool
+        self,
+        task_id: str,
+        env_type: str,
+        from_pixels: bool,
+        *,
+        continuous: bool = False,
     ) -> tuple[str, str]:
         import_path, envpool_cls = self.envpools[task_id][env_type]
+        if continuous:
+            if import_path != "envpool.atari":
+                raise ValueError(
+                    "continuous=True is only supported for Atari tasks"
+                )
+            envpool_cls = {
+                "dm": "AtariContinuousDMEnvPool",
+                "gymnasium": "AtariContinuousGymnasiumEnvPool",
+            }[env_type]
         if from_pixels:
             if not self._pixel_variant_supported(import_path):
                 raise ValueError(
@@ -205,10 +225,19 @@ class EnvRegistry:
         **make_kwargs: Any,
     ) -> EnvSpec:
         """Make the underlying EnvSpec used by EnvPool constructors."""
+        continuous = make_kwargs.get(
+            "continuous", self.specs[task_id][2].get("continuous", False)
+        )
+        if not isinstance(continuous, (bool, np.bool_)):
+            raise ValueError("continuous must be a boolean")
         import_path, spec_cls, kwargs = self._resolve_spec_entry(
-            task_id, from_pixels
+            task_id, from_pixels, continuous=bool(continuous)
         )
         kwargs = {**kwargs, **make_kwargs}
+        if import_path == "envpool.atari":
+            kwargs["continuous"] = bool(continuous)
+        else:
+            kwargs.pop("continuous", None)
         if needs_render:
             for key in ("render", "enable_render"):
                 if key in kwargs and key not in make_kwargs:
@@ -287,7 +316,10 @@ class EnvRegistry:
             **kwargs,
         )
         import_path, envpool_cls = self._resolve_envpool_entry(
-            task_id, env_type, from_pixels
+            task_id,
+            env_type,
+            from_pixels,
+            continuous=bool(getattr(spec.config, "continuous", False)),
         )
         env = getattr(importlib.import_module(import_path), envpool_cls)(spec)
         return self._apply_wrapper_kwargs(env, wrapper_kwargs)
@@ -295,6 +327,225 @@ class EnvRegistry:
     def make_dm(self, task_id: str, **kwargs: Any) -> DMEnvPool:
         """Make dm_env compatible envpool."""
         return self.make(task_id, "dm", **kwargs)
+
+    @overload
+    def make_multitask(
+        self,
+        task_ids: Sequence[str],
+        env_type: Literal["dm"],
+        *,
+        envs_per_task: int | Sequence[int] = 1,
+        **kwargs: Any,
+    ) -> DMEnvPool: ...
+
+    @overload
+    def make_multitask(
+        self,
+        task_ids: Sequence[str],
+        env_type: Literal["gym", "gymnasium"] = "gymnasium",
+        *,
+        envs_per_task: int | Sequence[int] = 1,
+        **kwargs: Any,
+    ) -> GymnasiumEnvPool: ...
+
+    @overload
+    def make_multitask(
+        self,
+        task_ids: Sequence[str],
+        env_type: str,
+        *,
+        envs_per_task: int | Sequence[int] = 1,
+        **kwargs: Any,
+    ) -> DMEnvPool | GymnasiumEnvPool: ...
+
+    def make_multitask(
+        self,
+        task_ids: Sequence[str],
+        env_type: str = "gymnasium",
+        *,
+        envs_per_task: int | Sequence[int] = 1,
+        **kwargs: Any,
+    ) -> DMEnvPool | GymnasiumEnvPool:
+        """Create one native pool with a fixed task for each environment slot.
+
+        Slots follow ``task_ids`` order, with each task repeated by its count.
+        Supported backends are MetaWorld, MyoSuite, DMC Dog, and Atari. Tasks must
+        share the complete state/action spec and pool-wide configuration.
+        """
+        if isinstance(task_ids, (str, bytes)):
+            raise ValueError("task_ids must be a nonempty sequence of task IDs")
+        task_ids = tuple(task_ids)
+        if not task_ids:
+            raise ValueError("task_ids must be a nonempty sequence of task IDs")
+        for task_id in task_ids:
+            if not isinstance(task_id, str) or task_id not in self.specs:
+                raise ValueError(f"Unknown multitask task ID: {task_id!r}")
+        if env_type == "gym":
+            env_type = "gymnasium"
+        if env_type not in {"dm", "gymnasium"}:
+            raise ValueError("env_type must be 'dm' or 'gymnasium'")
+
+        counts = self._multitask_counts(envs_per_task, len(task_ids))
+        num_envs = sum(counts)
+        if "num_envs" in kwargs and kwargs["num_envs"] != num_envs:
+            raise ValueError("num_envs must equal the sum of envs_per_task")
+        kwargs["num_envs"] = num_envs
+        for key in (
+            "task",
+            "task_name",
+            "env_task_names",
+            "env_max_episode_steps",
+        ):
+            if key in kwargs:
+                raise ValueError(
+                    f"make_multitask controls {key}; use task_ids instead"
+                )
+
+        backend = self._resolve_spec_entry(task_ids[0], False)[:2]
+        supported = {
+            ("envpool.atari", "AtariEnvSpec"),
+            ("envpool.mujoco.metaworld", "MetaWorldEnvSpec"),
+            ("envpool.mujoco.myosuite", "MyoSuiteEnvSpec"),
+            ("envpool.mujoco.dmc", "DmcDogEnvSpec"),
+        }
+        if backend not in supported:
+            raise ValueError(
+                "Native multitask currently supports MetaWorld, MyoSuite, "
+                "DMC Dog, and Atari"
+            )
+        continuous = kwargs.get(
+            "continuous", self.specs[task_ids[0]][2].get("continuous", False)
+        )
+        if not isinstance(continuous, (bool, np.bool_)):
+            raise ValueError("continuous must be a boolean")
+        task_key = "task_name"
+        if backend == ("envpool.atari", "AtariEnvSpec"):
+            task_key = "task"
+            if not continuous:
+                if not kwargs.get("full_action_space", True):
+                    raise ValueError(
+                        "Discrete Atari multitask requires full_action_space=True"
+                    )
+                kwargs["full_action_space"] = True
+        spec_kwargs = dict(kwargs)
+        from_pixels, _, needs_render = self._extract_make_options(spec_kwargs)
+        pool_entry = self._resolve_envpool_entry(
+            task_ids[0],
+            env_type,
+            from_pixels,
+            continuous=bool(continuous),
+        )
+        specs = []
+        for task_id in task_ids:
+            if (
+                self._resolve_spec_entry(task_id, False)[:2] != backend
+                or self._resolve_envpool_entry(
+                    task_id,
+                    env_type,
+                    from_pixels,
+                    continuous=bool(continuous),
+                )
+                != pool_entry
+            ):
+                raise ValueError(
+                    "All tasks must use the same native environment backend"
+                )
+            specs.append(
+                self._make_env_spec(
+                    task_id,
+                    from_pixels=from_pixels,
+                    needs_render=needs_render,
+                    **spec_kwargs,
+                )
+            )
+        reference = specs[0]
+        reference_config = reference.config._asdict()
+        for task_id, spec in zip(task_ids[1:], specs[1:], strict=True):
+            self._check_multitask_spec(reference, spec, task_id)
+            for key, value in spec.config._asdict().items():
+                if key not in {
+                    "task",
+                    "task_name",
+                    "max_episode_steps",
+                } and not np.array_equal(reference_config[key], value):
+                    raise ValueError(
+                        f"Incompatible pool configuration {key!r} for {task_id}"
+                    )
+        env_task_names = []
+        env_max_episode_steps = []
+        env_task_ids = []
+        for task_id, spec, count in zip(task_ids, specs, counts, strict=True):
+            env_task_names.extend([getattr(spec.config, task_key)] * count)
+            env_max_episode_steps.extend(
+                [spec.config.max_episode_steps] * count
+            )
+            env_task_ids.extend([task_id] * count)
+        env = self.make(
+            task_ids[0],
+            env_type,
+            env_task_names=env_task_names,
+            env_max_episode_steps=env_max_episode_steps,
+            **kwargs,
+        )
+        # Metadata only: all stepping remains in the single native pool.
+        env.task_ids = tuple(task_ids)
+        env.env_task_ids = tuple(env_task_ids)
+        return env
+
+    @staticmethod
+    def _multitask_counts(
+        envs_per_task: int | Sequence[int], num_tasks: int
+    ) -> list[int]:
+        """Normalize and validate one positive slot count for each task."""
+
+        def positive_count(value: Any) -> int:
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, np.integer))
+                or value <= 0
+            ):
+                raise ValueError(
+                    "envs_per_task counts must be positive integers"
+                )
+            return int(value)
+
+        if isinstance(envs_per_task, (int, np.integer)):
+            counts = [positive_count(envs_per_task)] * num_tasks
+        else:
+            try:
+                counts = [positive_count(value) for value in envs_per_task]
+            except TypeError as exc:
+                raise ValueError(
+                    "envs_per_task must be an integer or counts"
+                ) from exc
+            if len(counts) != num_tasks:
+                raise ValueError(
+                    "envs_per_task must contain one count per task"
+                )
+        return counts
+
+    @staticmethod
+    def _check_multitask_spec(
+        reference: EnvSpec, spec: EnvSpec, task_id: str
+    ) -> None:
+        """Reject any field, shape, dtype, or bounds mismatch before construction."""
+        for name in ("state_array_spec", "action_array_spec"):
+            expected = getattr(reference, name)
+            actual = getattr(spec, name)
+            if list(expected) != list(actual):
+                raise ValueError(f"Incompatible {name} keys for {task_id}")
+            for key, value in expected.items():
+                other = actual[key]
+                if (
+                    np.dtype(value.dtype) != np.dtype(other.dtype)
+                    or value.shape != other.shape
+                    or value.is_discrete != other.is_discrete
+                    or not np.array_equal(value.minimum, other.minimum)
+                    or not np.array_equal(value.maximum, other.maximum)
+                ):
+                    raise ValueError(
+                        f"Incompatible {name} field {key!r} for {task_id}"
+                    )
 
     def make_gymnasium(self, task_id: str, **kwargs: Any) -> GymnasiumEnvPool:
         """Make gymnasium.Env compatible envpool."""
@@ -399,6 +650,54 @@ def make_gym(task_id: str, **kwargs: Any) -> GymnasiumEnvPool:
 def make_gymnasium(task_id: str, **kwargs: Any) -> GymnasiumEnvPool:
     """Make gymnasium.Env compatible envpool."""
     return registry.make_gymnasium(task_id, **kwargs)
+
+
+@overload
+def make_multitask(
+    task_ids: Sequence[str],
+    env_type: Literal["dm"],
+    *,
+    envs_per_task: int | Sequence[int] = 1,
+    **kwargs: Any,
+) -> DMEnvPool: ...
+
+
+@overload
+def make_multitask(
+    task_ids: Sequence[str],
+    env_type: Literal["gym", "gymnasium"] = "gymnasium",
+    *,
+    envs_per_task: int | Sequence[int] = 1,
+    **kwargs: Any,
+) -> GymnasiumEnvPool: ...
+
+
+@overload
+def make_multitask(
+    task_ids: Sequence[str],
+    env_type: str,
+    *,
+    envs_per_task: int | Sequence[int] = 1,
+    **kwargs: Any,
+) -> DMEnvPool | GymnasiumEnvPool: ...
+
+
+def make_multitask(
+    task_ids: Sequence[str],
+    env_type: str = "gymnasium",
+    *,
+    envs_per_task: int | Sequence[int] = 1,
+    **kwargs: Any,
+) -> DMEnvPool | GymnasiumEnvPool:
+    """Create a native same-family pool with stable, contiguous task slots.
+
+    ``envs_per_task`` is one count for every task, or one count per task.
+    ``env.env_task_ids`` maps each environment ID to its public task ID.
+    The mapping persists through resets. Other arguments follow ``make``.
+    """
+    return registry.make_multitask(
+        task_ids, env_type, envs_per_task=envs_per_task, **kwargs
+    )
 
 
 def make_spec(task_id: str, **kwargs: Any) -> EnvSpec:

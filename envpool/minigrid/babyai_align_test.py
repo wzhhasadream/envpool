@@ -60,13 +60,13 @@ class BabyAIEnvPoolAlignTest(absltest.TestCase):
             oracle_obs_space = cast(Any, oracle_env.observation_space)
             self._check_spec(
                 oracle_obs_space["direction"],
-                env.observation_space["direction"],
+                env.single_observation_space["direction"],
             )
             self._check_spec(
                 oracle_obs_space["image"],
-                env.observation_space["image"],
+                env.single_observation_space["image"],
             )
-            self._check_spec(oracle_env.action_space, env.action_space)
+            self._check_spec(oracle_env.action_space, env.single_action_space)
 
             obs, info = env.reset()
             oracle_env.reset(seed=0)

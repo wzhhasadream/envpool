@@ -135,7 +135,7 @@ class _ProcgenEnvPoolTest(absltest.TestCase):
         env2 = make_gym(task_id, num_envs=num_envs, seed=1)
         act_space = env0.action_space
         for _ in range(total):
-            action = np.array([act_space.sample() for _ in range(num_envs)])
+            action = act_space.sample()
             obs0 = env0.step(action)[0]
             obs1 = env1.step(action)[0]
             obs2 = env2.step(action)[0]
@@ -168,12 +168,12 @@ class _ProcgenEnvPoolTest(absltest.TestCase):
         task_id = "CoinrunHard-v0"
         seed = 0
         env = make_gym(task_id, seed=seed, channel_first=False)
-        env.action_space.seed(seed)
+        env.single_action_space.seed(seed)
         done = [False]
         cnt = sum_reward = sum_obs = 0
         while not done[0]:
             cnt += 1
-            act = env.action_space.sample()
+            act = env.single_action_space.sample()
             obs, rew, term, trunc, info = env.step(np.array([act]))
             sum_obs = obs[0].astype(int) + sum_obs
             done = term | trunc
@@ -203,12 +203,12 @@ class _ProcgenEnvPoolTest(absltest.TestCase):
     ) -> None:
         env1 = make_gym(task_id, seed=seed, channel_first=True)
         env2 = make_gym(task_id, seed=seed, channel_first=False)
-        self.assertEqual(env1.observation_space.shape, (3, 64, 64))
-        self.assertEqual(env2.observation_space.shape, (64, 64, 3))
+        self.assertEqual(env1.single_observation_space.shape, (3, 64, 64))
+        self.assertEqual(env2.single_observation_space.shape, (64, 64, 3))
         for _ in range(total):
             act = env1.action_space.sample()
-            obs1 = env1.step(np.array([act]))[0][0]
-            obs2 = env2.step(np.array([act]))[0][0]
+            obs1 = env1.step(act)[0][0]
+            obs2 = env2.step(act)[0][0]
             self.assertEqual(obs1.shape, (3, 64, 64))
             self.assertEqual(obs2.shape, (64, 64, 3))
             np.testing.assert_allclose(obs1, obs2.transpose(2, 0, 1))

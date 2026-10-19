@@ -39,11 +39,15 @@ class HopperEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(4), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("stand")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
+        "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
         "obs:position"_.Bind(
             StackSpec(Spec<mjtNum>({6}), conf["frame_stack"_])),
         "obs:velocity"_.Bind(
@@ -90,7 +94,8 @@ class HopperEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         id_foot_(mj_name2id(model_, mjOBJ_XBODY, "foot")),
         id_torso_subtreelinvel_(GetSensorId(model_, "torso_subtreelinvel")),
@@ -169,7 +174,10 @@ class HopperEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   void WriteState(bool reset) {
     auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];
       AssignPixelObservation("obs:pixels", &obs_pixels, reset);

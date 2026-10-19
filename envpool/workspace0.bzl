@@ -264,10 +264,12 @@ def workspace():
     maybe(
         http_archive,
         name = "ale",
-        sha256 = "d6ac9406690bb3533b37a99253bdfc59bc27779c5e1b6855c763d0b367bcbf96",
-        strip_prefix = "Arcade-Learning-Environment-0.11.2",
+        # Official v0.11.2 commit; see third_party/ale/README.md.
+        sha256 = "9e4f0dbe8c73c382a208e49c7d071edd146f5456b2a6ba8edb71bac0c2d91f05",
+        strip_prefix = "Arcade-Learning-Environment-72a87826916aa0b696096c991faa982992ff80ec",
         urls = [
-            "https://github.com/Farama-Foundation/Arcade-Learning-Environment/archive/refs/tags/v0.11.2.tar.gz",
+            "https://github.com/Farama-Foundation/Arcade-Learning-Environment/archive/72a87826916aa0b696096c991faa982992ff80ec.tar.gz",
+            "https://codeload.github.com/Farama-Foundation/Arcade-Learning-Environment/tar.gz/72a87826916aa0b696096c991faa982992ff80ec",
         ],
         build_file = "//third_party/ale:ale.BUILD",
     )
@@ -600,11 +602,12 @@ perl -Iperllib -I. macros/macros.pl version.mac 'macros/*.mac' 'output/*.mac'
     maybe(
         http_archive,
         name = "gymnasium_robotics_assets",
-        sha256 = "0c47791b0d8aa167f63a574793f1c54724b545ae2b03225c78946139f2a4c8ac",
-        strip_prefix = "Gymnasium-Robotics-1.4.2/gymnasium_robotics/envs",
+        # Official v1.4.2 commit; see third_party/gymnasium_robotics_assets/README.md.
+        sha256 = "3c675a90d800b7f1a48710051f106d6c4019f06d859aa928a5cd82e8be141890",
+        strip_prefix = "Gymnasium-Robotics-42eae53b2b27321d29090c219ce2f675c596de77/gymnasium_robotics/envs",
         urls = [
-            "https://github.com/Farama-Foundation/Gymnasium-Robotics/archive/refs/tags/v1.4.2.tar.gz",
-            "https://codeload.github.com/Farama-Foundation/Gymnasium-Robotics/tar.gz/refs/tags/v1.4.2",
+            "https://github.com/Farama-Foundation/Gymnasium-Robotics/archive/42eae53b2b27321d29090c219ce2f675c596de77.tar.gz",
+            "https://codeload.github.com/Farama-Foundation/Gymnasium-Robotics/tar.gz/42eae53b2b27321d29090c219ce2f675c596de77",
         ],
         build_file = "//third_party/gymnasium_robotics_assets:gymnasium_robotics_assets.BUILD",
     )

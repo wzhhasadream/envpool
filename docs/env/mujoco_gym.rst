@@ -1,6 +1,9 @@
 Mujoco (gym)
 ============
 
+For native ``action_repeat`` configuration and stepping semantics, see
+:doc:`mujoco_action_repeat`.
+
 We use ``mujoco==3.6.0`` as the codebase.
 See https://github.com/google-deepmind/mujoco/tree/3.6.0
 

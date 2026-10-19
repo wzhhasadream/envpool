@@ -53,3 +53,7 @@ myosuite_oracle_install_deps()
 load("@jumanji_oracle_requirements//:requirements.bzl", jumanji_oracle_install_deps = "install_deps")
 
 jumanji_oracle_install_deps()
+
+load("@ale_oracle_requirements//:requirements.bzl", ale_oracle_install_deps = "install_deps")
+
+ale_oracle_install_deps()

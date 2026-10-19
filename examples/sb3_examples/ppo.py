@@ -56,8 +56,8 @@ class VecAdapter(VecEnv):
         self.venv = venv
         super().__init__(
             num_envs=venv.spec.config.num_envs,
-            observation_space=venv.observation_space,
-            action_space=venv.action_space,
+            observation_space=venv.single_observation_space,
+            action_space=venv.single_action_space,
         )
 
     def _info_dict_to_list(

@@ -105,7 +105,7 @@ class _HighwayRenderTest(absltest.TestCase):
                 self.assertGreater(int(frame0.max()) - int(frame0.min()), 0)
 
                 if step < 2:
-                    env.step(_zero_action(env.action_space, 2))
+                    env.step(_zero_action(env.single_action_space, 2))
         finally:
             env.close()
 

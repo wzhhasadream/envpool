@@ -70,7 +70,7 @@ class ProcgenRenderTest(absltest.TestCase):
                         np.testing.assert_array_equal(frame, frame_again)
                         if step_idx + 1 < _RENDER_STEPS:
                             obs, _, _, _, _ = env.step(
-                                _zero_action(env.action_space, 1)
+                                _zero_action(env.single_action_space, 1)
                             )
                 finally:
                     env.close()
@@ -103,7 +103,7 @@ class ProcgenRenderTest(absltest.TestCase):
                 np.testing.assert_array_equal(frame0, frame0_again)
                 if step_idx + 1 < _RENDER_STEPS:
                     obs, _, _, _, _ = env.step(
-                        _zero_action(env.action_space, 2)
+                        _zero_action(env.single_action_space, 2)
                     )
         finally:
             env.close()

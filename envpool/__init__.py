@@ -33,17 +33,22 @@ from envpool.registration import (
     make_dm,
     make_gym,
     make_gymnasium,
+    make_multitask,
     make_spec,
     register,
 )
+from envpool.wrappers import PixelObservationLayout, SameStepAutoReset
 
 __version__ = "1.2.5+apex.hb1"
 __all__ = [
+    "SameStepAutoReset",
+    "PixelObservationLayout",
     "register",
     "make",
     "make_dm",
     "make_gym",
     "make_gymnasium",
+    "make_multitask",
     "make_spec",
     "list_all_envs",
     "EnvSpec",

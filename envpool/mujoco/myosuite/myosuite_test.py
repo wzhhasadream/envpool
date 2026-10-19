@@ -34,6 +34,7 @@ _INFO_KEYS = {
     "task_id",
     "sparse",
     "solved",
+    "success",
     "oracle_numpy2_broken",
     "model_nq",
     "model_nv",
@@ -132,6 +133,9 @@ class MyoSuiteTest(absltest.TestCase):
                     obs, info = env.reset()
                     self.assertEqual(obs.shape, (2, task["obs_dim"]))
                     self.assertTrue(_INFO_KEYS.issubset(info.keys()))
+                    np.testing.assert_array_equal(
+                        info["success"], info["solved"]
+                    )
                     action = np.zeros((2, task["action_dim"]), dtype=np.float32)
                     obs, rew, term, trunc, info = env.step(action)
                     self.assertEqual(obs.shape, (2, task["obs_dim"]))
@@ -141,6 +145,9 @@ class MyoSuiteTest(absltest.TestCase):
                     self.assertFalse(np.any(np.isnan(obs)))
                     self.assertFalse(np.any(np.isnan(rew)))
                     self.assertTrue(_INFO_KEYS.issubset(info.keys()))
+                    np.testing.assert_array_equal(
+                        info["success"], info["solved"]
+                    )
                 finally:
                     env.close()
 
@@ -148,6 +155,43 @@ class MyoSuiteTest(absltest.TestCase):
         """The pinned oracle can instantiate every official task under NumPy 2."""
         for task in _TASKS:
             self.assertFalse(task["oracle_numpy2_broken"], task["id"])
+
+    def test_reach_reset_targets_follow_task_randomization(self) -> None:
+        """Random reach targets vary reproducibly; fixed reach targets do not."""
+        for task_id, random_targets in (
+            ("myoFingerReachFixed-v0", False),
+            ("myoFingerReachRandom-v0", True),
+        ):
+            with self.subTest(task_id=task_id):
+                env0 = make_gymnasium(task_id, num_envs=1, seed=42)
+                env1 = make_gymnasium(task_id, num_envs=1, seed=42)
+                try:
+                    targets = []
+                    for _ in range(8):
+                        obs0, info0 = env0.reset()
+                        obs1, info1 = env1.reset()
+                        np.testing.assert_array_equal(obs0, obs1)
+                        self._assert_info_equal(info0, info1)
+                        nsite = int(np.asarray(info0["model_nsite"]).item())
+                        targets.append(
+                            np.asarray(info0["site_pos"][0])[: 3 * nsite].copy()
+                        )
+                    changed = any(
+                        not np.array_equal(targets[0], target)
+                        for target in targets[1:]
+                    )
+                    self.assertEqual(changed, random_targets)
+                    if random_targets:
+                        sites = np.stack(targets).reshape(8, nsite, 3)
+                        changed_sites = np.any(sites != sites[0], axis=(0, 2))
+                        self.assertEqual(int(changed_sites.sum()), 1)
+                        samples = sites[:, changed_sites, :]
+                        # Pinned myoFingerReachRandom-v0 target_reach_range.
+                        self.assertTrue(np.all(samples >= [0.1, -0.1, 0.1]))
+                        self.assertTrue(np.all(samples <= [0.27, 0.1, 0.3]))
+                finally:
+                    env0.close()
+                    env1.close()
 
     def test_reference_surface_is_deterministic(self) -> None:
         """Same seed and action sequence must produce identical rollouts."""

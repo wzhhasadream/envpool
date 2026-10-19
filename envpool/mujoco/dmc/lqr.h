@@ -63,12 +63,16 @@ class LqrEnvFns {
  public:
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
+                    "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
                     "task_name"_.Bind(std::string("lqr_2_1")));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateActionRepeat(conf["action_repeat"_]);
+    ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     int n_bodies = LqrNumBodies(conf["task_name"_]);
-    return MakeDict("obs:position"_.Bind(StackSpec(Spec<mjtNum>({n_bodies}),
+    return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "obs:position"_.Bind(StackSpec(Spec<mjtNum>({n_bodies}),
                                                    conf["frame_stack"_])),
                     "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({n_bodies}),
                                                    conf["frame_stack"_]))
@@ -117,7 +121,9 @@ class LqrEnvBase : public Env<EnvSpecT>, public MujocoEnv {
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
-            RenderCameraIdOrDefault<kFromPixels>(spec.config)) {
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_],
+            spec.config["friction_multiplier"_]) {
 #ifdef ENVPOOL_TEST
     qvel0_.resize(model_->nv);
     stiffness0_.resize(model_->njnt);
@@ -187,7 +193,10 @@ class LqrEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   void WriteState(bool reset) {
     auto state = Allocate();
     state["reward"_] = reward_;
+    state["info:per_timestep_reward"_] = last_reward_;
     state["discount"_] = discount_;
+    state["elapsed_step"_] = elapsed_step_;
+    state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
     if constexpr (kFromPixels) {
       auto obs_pixels = state["obs:pixels"_];
       AssignPixelObservation("obs:pixels", &obs_pixels, reset);

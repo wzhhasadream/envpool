@@ -70,6 +70,7 @@ from dm_control import _render, suite
 from dm_control._render import base as dm_control_render_base
 from dm_control._render import executor as dm_control_render_executor
 from dm_control.mujoco import engine as dm_control_engine
+from dm_control.mujoco.wrapper.mjbindings import mjlib
 
 import envpool.mujoco.dmc.registration as reg
 from envpool.registration import make_dm, make_gym
@@ -236,6 +237,14 @@ def _load_official_env(domain: str, task: str) -> Any:
 
 
 def _reset_official_state(env: Any, ts: Any, domain: str, task: str) -> None:
+    # Initialize task-side effects (for example Finger/Fish visibility) and
+    # clear dm_control's reset-next-step flag before syncing the initial state.
+    # physics.reset_context alone only resets mjData, not the task/environment.
+    if domain == "quadruped" and task == "escape":
+        with _without_dm_control_render_contexts():
+            env.reset()
+    else:
+        env.reset()
     with env.physics.reset_context():
         env.physics.data.qpos = ts.observation.qpos0[0]
         if hasattr(ts.observation, "qvel0"):
@@ -333,6 +342,18 @@ def _reset_official_state(env: Any, ts: Any, domain: str, task: str) -> None:
             env.physics.after_reset()
     if hasattr(ts.observation, "qacc_warmstart0"):
         env.physics.data.qacc_warmstart = ts.observation.qacc_warmstart0[0]
+    if domain == "quadruped" and task == "escape":
+        # A previous render may already have uploaded the old episode's terrain.
+        # Updating model data alone does not refresh that OpenGL heightfield.
+        contexts = env.physics._contexts
+        if contexts is not None:
+            with contexts.gl.make_current() as ctx:
+                ctx.call(
+                    mjlib.mjr_uploadHField,
+                    env.physics.model.ptr,
+                    contexts.mujoco.ptr,
+                    0,
+                )
 
 
 class MujocoDmcRenderTest(absltest.TestCase):
@@ -363,7 +384,7 @@ class MujocoDmcRenderTest(absltest.TestCase):
                 _assert_frames_close(frame1[0], frames[1])
                 _assert_frames_close(frame0, frame0_again)
                 if step_idx + 1 < _RENDER_STEPS:
-                    env.step(_zero_action(env.action_space, 2))
+                    env.step(_zero_action(env.single_action_space, 2))
         finally:
             env.close()
 
@@ -395,7 +416,7 @@ class MujocoDmcRenderTest(absltest.TestCase):
                             int(frame_again.max()) - int(frame_again.min()), 0
                         )
                         if step_idx + 1 < _RENDER_STEPS:
-                            env.step(_zero_action(env.action_space, 1))
+                            env.step(_zero_action(env.single_action_space, 1))
                 finally:
                     env.close()
 
@@ -430,6 +451,79 @@ class MujocoDmcRenderTest(absltest.TestCase):
                         max_mean_abs_diff=8.0,
                         max_mismatch_ratio=0.12,
                     )
+                finally:
+                    env.close()
+                    oracle.close()
+
+    def test_repeated_pixels_match_official_trajectory(self) -> None:
+        """Compare every task's repeated pixels after a single initial sync."""
+        for task_id, (domain, task) in sorted(_task_map().items()):
+            camera_id = 2 if domain == "quadruped" else 0
+            with self.subTest(task_id=task_id):
+                env = make_dm(
+                    task_id,
+                    num_envs=1,
+                    seed=0,
+                    from_pixels=True,
+                    action_repeat=3,
+                    frame_stack=3,
+                    render_mode="rgb_array",
+                    render_width=96,
+                    render_height=72,
+                )
+                oracle = _load_official_env(domain, task)
+                try:
+                    # Escape changes its heightfield on every reset; exercise
+                    # reuse of both native and original rendering contexts.
+                    resets = (
+                        2 if (domain, task) == ("quadruped", "escape") else 1
+                    )
+                    for _ in range(resets):
+                        ts = env.reset(np.array([0]))
+                        _reset_official_state(oracle, ts, domain, task)
+                        # The camera is intentionally omitted from make_dm:
+                        # assert the ApexRL domain default, not an explicit override.
+                        self.assertEqual(
+                            env.config["render_camera_id"], camera_id
+                        )
+                        frame = oracle.physics.render(
+                            height=72, width=96, camera_id=camera_id
+                        )
+                        frames = [frame] * 3
+                        rng = np.random.default_rng(17)
+                        for step in range(_RENDER_STEPS + 1):
+                            if step:
+                                action = rng.uniform(
+                                    -0.3, 0.3, oracle.action_spec().shape
+                                ).astype(oracle.action_spec().dtype)
+                                for _ in range(3):
+                                    oracle.step(action)
+                                ts = env.step(action[np.newaxis, ...])
+                                frame = oracle.physics.render(
+                                    height=72, width=96, camera_id=camera_id
+                                )
+                                frames = [*frames[1:], frame]
+                            self.assertTrue(
+                                ts.first()[0] if step == 0 else ts.mid()[0]
+                            )
+                            self.assertAlmostEqual(
+                                oracle.physics.data.time,
+                                3 * step * oracle.control_timestep(),
+                            )
+                            pixels = ts.observation.pixels[0]
+                            self.assertEqual(pixels.shape, (9, 72, 96))
+                            self.assertEqual(pixels.dtype, np.uint8)
+                            expected = np.concatenate(
+                                [f.transpose(2, 0, 1) for f in frames], axis=0
+                            )
+                            # Use the existing renderer-level budget, without the
+                            # broader reset-only oracle tolerance above. No state
+                            # synchronization is performed during this trajectory.
+                            _assert_frames_close(pixels, expected)
+                            np.testing.assert_array_equal(
+                                pixels[-3:].transpose(1, 2, 0),
+                                _render_array(env)[0],
+                            )
                 finally:
                     env.close()
                     oracle.close()

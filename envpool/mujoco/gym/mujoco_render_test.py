@@ -351,7 +351,7 @@ class MujocoRenderTest(absltest.TestCase):
                 _assert_frames_close(frame1[0], frames[1])
                 _assert_frames_close(frame0, frame0_again)
                 if step_idx + 1 < _RENDER_STEPS:
-                    env.step(_zero_action(env.action_space, 2))
+                    env.step(_zero_action(env.single_action_space, 2))
         finally:
             env.close()
 
@@ -383,7 +383,7 @@ class MujocoRenderTest(absltest.TestCase):
                             int(frame_again.max()) - int(frame_again.min()), 0
                         )
                         if step_idx + 1 < _RENDER_STEPS:
-                            env.step(_zero_action(env.action_space, 1))
+                            env.step(_zero_action(env.single_action_space, 1))
                 finally:
                     env.close()
 

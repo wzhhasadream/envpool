@@ -538,9 +538,9 @@ def _assert_space_alignment(
             try:
                 _assert_space_equal(
                     env0.observation_space,
-                    env1.observation_space,
+                    env1.single_observation_space,
                 )
-                _assert_space_equal(env0.action_space, env1.action_space)
+                _assert_space_equal(env0.action_space, env1.single_action_space)
             finally:
                 env0.close()
                 env1.close()
@@ -568,10 +568,10 @@ def _assert_same_seed_rollout(
             env1 = make_gymnasium(task_id, num_envs=2, seed=0)
             try:
                 _assert_goal_obs_equal(env0.reset()[0], env1.reset()[0])
-                env0.action_space.seed(1)
+                env0.single_action_space.seed(1)
                 for _ in range(num_steps):
                     action = _sample_action_batch(
-                        env0.action_space,
+                        env0.single_action_space,
                         num_envs=2,
                     )
                     obs0, reward0, term0, trunc0, _ = env0.step(action)
@@ -598,10 +598,10 @@ def _assert_different_seed_rollout(
                 obs0 = env0.reset()[0]
                 obs1 = env1.reset()[0]
                 differs = not _obs_allclose(obs0, obs1)
-                env0.action_space.seed(1)
+                env0.single_action_space.seed(1)
                 for _ in range(num_steps):
                     action = _sample_action_batch(
-                        env0.action_space,
+                        env0.single_action_space,
                         num_envs=2,
                     )
                     obs0 = env0.step(action)[0]
@@ -1321,8 +1321,10 @@ class _GymnasiumRoboticsKitchenEnvPoolTest(absltest.TestCase):
         env0 = _make_upstream_env("FrankaKitchen-v1")
         env1 = make_gymnasium("FrankaKitchen-v1")
         try:
-            _assert_space_equal(env0.observation_space, env1.observation_space)
-            _assert_space_equal(env0.action_space, env1.action_space)
+            _assert_space_equal(
+                env0.observation_space, env1.single_observation_space
+            )
+            _assert_space_equal(env0.action_space, env1.single_action_space)
         finally:
             env0.close()
             env1.close()
