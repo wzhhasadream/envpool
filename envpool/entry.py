@@ -22,6 +22,7 @@ import envpool.jumanji.registration  # noqa: F401
 import envpool.minigrid.registration  # noqa: F401
 import envpool.mujoco.dmc.registration  # noqa: F401
 import envpool.mujoco.gym.registration  # noqa: F401
+import envpool.mujoco.humanoid_bench.registration  # noqa: F401
 import envpool.mujoco.metaworld.registration  # noqa: F401
 import envpool.mujoco.myosuite.registration  # noqa: F401
 import envpool.mujoco.playground.registration  # noqa: F401

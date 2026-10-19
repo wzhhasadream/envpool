@@ -24,6 +24,34 @@ load("//third_party/myosuite:oracle_requirements.bzl", "oracle_requirement")
 
 package(default_visibility = ["//visibility:public"])
 
+cc_library(
+    name = "humanoid_bench_env",
+    srcs = ["humanoid_bench/task.cc"],
+    hdrs = ["humanoid_bench/task.h", "humanoid_bench/humanoid_bench.h"],
+    deps = [":mujoco_gym_env", ":mujoco_dmc_env", "@mujoco//:mujoco_obj_decoder_plugin_lib", "@mujoco//:mujoco_touch_grid_plugin_lib"],
+)
+
+pybind_extension(
+    name = "humanoid_bench_envpool",
+    srcs = ["humanoid_bench/envpool.cc"],
+    deps = [":humanoid_bench_env", "//envpool/core:py_envpool"],
+)
+
+py_library(
+    name = "humanoid_bench",
+    srcs = ["humanoid_bench/__init__.py"],
+    data = [":humanoid_bench_envpool", "humanoid_bench/registry.json", "humanoid_bench/LICENSE", "humanoid_bench/NOTICE"] + glob(["humanoid_bench/assets/**", "humanoid_bench/plugins/*", "humanoid_bench/mujoco_licenses/**"], allow_empty = True),
+    imports = ["../.."],
+    deps = ["//envpool/python:api"],
+)
+
+py_library(
+    name = "humanoid_bench_registration",
+    srcs = ["humanoid_bench/registration.py"],
+    imports = ["../.."],
+    deps = ["//envpool:registration"],
+)
+
 config_setting(
     name = "release_assets",
     values = {"define": "envpool_release_assets=true"},
@@ -58,6 +86,7 @@ py_library(
         ":metaworld",
         ":mujoco_dmc",
         ":mujoco_gym",
+        ":humanoid_bench",
         ":myosuite",
         ":playground",
         ":robotics",

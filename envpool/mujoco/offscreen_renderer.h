@@ -52,7 +52,8 @@ class OffscreenRenderer {
   void Render(const mjModel* model, mjData* data, int width, int height,
               int camera_id, unsigned char* rgb,
               const mjvCamera* camera_override = nullptr,
-              const mjvOption* option_override = nullptr);
+              const mjvOption* option_override = nullptr,
+              const mjvGeom* extra_geoms = nullptr, int extra_geom_count = 0);
 
  private:
   void Initialize(const mjModel* model);

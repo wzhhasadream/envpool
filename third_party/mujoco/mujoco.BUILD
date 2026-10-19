@@ -12,12 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "mujoco_touch_grid_plugin_lib",
+    srcs = select({"@envpool//:official_mujoco": [], "//conditions:default": glob(["plugin/sensor/*.cc", "plugin/sensor/*.h"])}),
+    cxxopts = select({
+        "@envpool//:windows": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    defines = ["MJ_STATIC"] + select({
+        "@envpool//:windows": ["mjDLLMAIN=MjTouchGridDllMain"],
+        "//conditions:default": [],
+    }),
+    deps = [":mujoco_lib"],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "mujoco_lib",
+    hdrs = glob(["include/mujoco/*.h", "include/mujoco/experimental/**/*.h"]),
+    includes = ["include", "include/mujoco"],
+    defines = ["MJ_STATIC"],
+    deps = select({
+        "@envpool//:official_mujoco": [":official_mujoco_lib"],
+        "//conditions:default": [":mujoco_static_lib"],
+    }),
+)
+
+cc_import(
+    name = "official_mujoco_lib",
+    shared_library = "@envpool//third_party/humanoid_bench:libmujoco.so.3.6.0",
+)
+
+cc_library(
+    name = "mujoco_static_lib",
     srcs = (
         glob(["src/cc/*.h"]) + glob([
             "src/engine/*.c",
@@ -250,10 +281,10 @@ cc_library(
 
 cc_library(
     name = "mujoco_obj_decoder_plugin_lib",
-    srcs = glob([
+    srcs = select({"@envpool//:official_mujoco": [], "//conditions:default": glob([
         "plugin/obj_decoder/*.cc",
         "plugin/obj_decoder/*.h",
-    ]),
+    ])}),
     cxxopts = select({
         "@envpool//:windows": ["/std:c++20"],
         "//conditions:default": ["-std=c++20"],
@@ -271,10 +302,10 @@ cc_library(
 
 cc_library(
     name = "mujoco_stl_decoder_plugin_lib",
-    srcs = glob([
+    srcs = select({"@envpool//:official_mujoco": [], "//conditions:default": glob([
         "plugin/stl_decoder/*.cc",
         "plugin/stl_decoder/*.h",
-    ]),
+    ])}),
     cxxopts = select({
         "@envpool//:windows": ["/std:c++20"],
         "//conditions:default": ["-std=c++20"],

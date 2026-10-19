@@ -39,6 +39,7 @@
 #include <windows.h>
 #define ENVPOOL_HAS_WGL 1
 #elif defined(__linux__) && __has_include(<EGL/egl.h>)
+#include <dlfcn.h>
 #include <EGL/egl.h>
 #if __has_include(<EGL/eglext.h>)
 #include <EGL/eglext.h>
@@ -340,6 +341,17 @@ class BorrowedWglContext final : public GlContext {
 class EglContext final : public GlContext {
  public:
   EglContext() {
+    // Wheel repair renames libEGL; expose its entry point to MuJoCo's loader.
+    static const void* egl_library = [] {
+      Dl_info library{};
+      if (!dladdr(reinterpret_cast<void*>(eglGetProcAddress), &library)) {
+        throw std::runtime_error("failed to locate the loaded EGL library");
+      }
+      void* handle = dlopen(library.dli_fname, RTLD_NOW | RTLD_GLOBAL);
+      if (!handle) throw std::runtime_error("failed to expose the EGL entry point");
+      return handle;
+    }();
+    (void)egl_library;
     const std::array<EGLint, 19> config_attribs = {
         EGL_RED_SIZE,
         8,
@@ -728,7 +740,8 @@ void OffscreenRenderer::UpdateCamera(const mjModel* model, const mjData* data,
 void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
                                int height, int camera_id, unsigned char* rgb,
                                const mjvCamera* camera_override,
-                               const mjvOption* option_override) {
+                               const mjvOption* option_override,
+                               const mjvGeom* extra_geoms, int extra_geom_count) {
   if (!initialized_) {
     Initialize(model);
   }
@@ -745,6 +758,10 @@ void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
     mjv_updateScene(model, data,
                     option_override != nullptr ? option_override : &option_,
                     &perturb_, &camera_, mjCAT_ALL, &scene_);
+    if (scene_.ngeom + extra_geom_count > scene_.maxgeom) {
+      throw std::runtime_error("Extra render geometry exceeds scene capacity");
+    }
+    for (int i = 0; i < extra_geom_count; ++i) scene_.geoms[scene_.ngeom++] = extra_geoms[i];
     mjr_render(viewport, &scene_, &context_);
   };
 

@@ -11,6 +11,11 @@ config_setting(
 )
 
 config_setting(
+    name = "official_mujoco",
+    define_values = {"envpool_official_mujoco": "true"},
+)
+
+config_setting(
     name = "linux_x86_64",
     constraint_values = [
         "@platforms//cpu:x86_64",

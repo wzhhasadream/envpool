@@ -37,7 +37,7 @@ from envpool.registration import (
     register,
 )
 
-__version__ = "1.2.5"
+__version__ = "1.2.5+apex.hb1"
 __all__ = [
     "register",
     "make",

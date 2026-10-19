@@ -65,7 +65,7 @@ class Spec : public ShapeSpec {
  public:
   using dtype = D;  // NOLINT
   bool is_discrete{false};
-  std::tuple<dtype, dtype> bounds = {std::numeric_limits<dtype>::min(),
+  std::tuple<dtype, dtype> bounds = {std::numeric_limits<dtype>::lowest(),
                                      std::numeric_limits<dtype>::max()};
   std::tuple<std::vector<dtype>, std::vector<dtype>> elementwise_bounds;
   explicit Spec(std::vector<int>&& shape)

@@ -37,7 +37,7 @@ def _maybe_scalar_int(value: Any) -> int | None:
     if not np.isfinite(scalar):
         return None
     integer = int(scalar)
-    if not np.isclose(scalar, integer):
+    if not np.isclose(scalar, float(integer)):
         return None
     return integer
 
@@ -47,14 +47,13 @@ def _maybe_discrete_range(
 ) -> tuple[int, int] | None:
     if np.prod(np.abs(spec.shape)) != 1:
         return None
+    if not np.issubdtype(spec.dtype, np.integer) and not (
+        spec_type == "act" and spec.is_discrete
+    ):
+        return None
     minimum = _maybe_scalar_int(spec.minimum)
     maximum = _maybe_scalar_int(spec.maximum)
     if minimum is None or maximum is None or maximum >= ACTION_THRESHOLD:
-        return None
-    if spec_type == "act":
-        if not (spec.is_discrete or np.issubdtype(spec.dtype, np.integer)):
-            return None
-    elif not np.issubdtype(spec.dtype, np.integer):
         return None
     return minimum, maximum - minimum + 1
 
