@@ -19,13 +19,61 @@ import sys
 from absl.testing import absltest
 
 
-def _assert_imports_succeed(*modules: str) -> None:
-    code = "\n".join(f"import {module}" for module in modules)
+def _assert_imports_succeed(
+    *modules: str, task_ids: tuple[str, ...] = ()
+) -> None:
+    # Disable eager family imports so each subprocess really exercises the
+    # requested native-module order rather than envpool.entry's fixed order.
+    code = """
+import sys
+import types
+sys.modules["envpool.entry"] = types.ModuleType("envpool.entry")
+"""
+    code += "\n".join(f"import {module}" for module in modules)
+    if task_ids:
+        code += f"""
+import envpool
+import envpool.mujoco.humanoid_bench.registration
+for task_id in {task_ids!r}:
+    env = envpool.make_gymnasium(task_id, num_envs=1, num_threads=1)
+    try:
+        env.reset()
+        env.step(env.action_space.sample() * 0)
+    finally:
+        env.close()
+"""
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
 class MujocoPluginRegistrationTest(absltest.TestCase):
     """Tests that MuJoCo decoder plugins are safe across extension modules."""
+
+    def test_humanoid_bench_registers_plugins_standalone(self) -> None:
+        """Loads STL, OBJ, and touch-grid models without another native module."""
+        _assert_imports_succeed(
+            "envpool.mujoco.humanoid_bench",
+            task_ids=("h1-walk-v0", "h1hand-walk-v0", "h1touch-walk-v0"),
+        )
+
+    def test_humanoid_bench_then_existing_modules_share_plugins(self) -> None:
+        """Checks other MuJoCo imports preserve all HumanoidBench plugins."""
+        _assert_imports_succeed(
+            "envpool.mujoco.humanoid_bench",
+            "envpool.mujoco.robotics",
+            "envpool.mujoco.dmc",
+            "envpool.mujoco.playground",
+            task_ids=("h1-walk-v0", "h1hand-walk-v0", "h1touch-walk-v0"),
+        )
+
+    def test_existing_modules_then_humanoid_bench_share_plugins(self) -> None:
+        """Checks HumanoidBench also registers its plugins when imported last."""
+        _assert_imports_succeed(
+            "envpool.mujoco.robotics",
+            "envpool.mujoco.dmc",
+            "envpool.mujoco.playground",
+            "envpool.mujoco.humanoid_bench",
+            task_ids=("h1-walk-v0", "h1hand-walk-v0", "h1touch-walk-v0"),
+        )
 
     def test_robotics_then_dmc_imports_share_stl_decoder(self) -> None:
         """Checks the release-test import order that first exposed the issue."""

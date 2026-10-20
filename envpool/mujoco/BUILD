@@ -41,7 +41,10 @@ cc_library(
 
 pybind_extension(
     name = "humanoid_bench_envpool",
-    srcs = ["humanoid_bench/envpool.cc"],
+    srcs = [
+        "humanoid_bench/envpool.cc",
+        "humanoid_bench/mujoco_plugin_init.cc",
+    ],
     deps = [
         ":humanoid_bench_env",
         "//envpool/core:py_envpool",
@@ -979,6 +982,8 @@ py_test(
     srcs = ["mujoco_plugin_registration_test.py"],
     imports = ["../.."],
     deps = [
+        ":humanoid_bench",
+        ":humanoid_bench_registration",
         ":metaworld",
         ":mujoco_dmc",
         ":playground",
