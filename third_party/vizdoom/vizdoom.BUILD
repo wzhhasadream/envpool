@@ -179,9 +179,9 @@ genrule(
     srcs = ["src/sc_man_scanner.re"],
     outs = ["src/sc_man_scanner.h"],
     cmd = "$(execpath :re2c) --no-generation-date -s -o $@ " +
-          "$(location src/sc_man_scanner.re)",
+          "$(execpath src/sc_man_scanner.re)",
     cmd_bat = "$(execpath @re2c_4_5_1//:re2c) --no-generation-date " +
-              "-s -o $@ $(location src/sc_man_scanner.re)",
+              "-s -o $@ $(execpath src/sc_man_scanner.re)",
     tools = select({
         "@envpool//:windows": ["@re2c_4_5_1//:re2c"],
         "//conditions:default": [":re2c"],
@@ -399,7 +399,7 @@ generated_dir=$$(dirname "$(execpath :viz_version)")
   -Iexternal/vizdoom/src/posix/sdl \
   -Iexternal/sdl2/include \
   -I"$${generated_dir}" \
-  "$(location src/posix/osx/iwadpicker_cocoa.mm)" \
+  "$(execpath src/posix/osx/iwadpicker_cocoa.mm)" \
   -o "$@"
 """,
     target_compatible_with = select({
@@ -431,7 +431,7 @@ generated_dir=$$(dirname "$(execpath :viz_version)")
   -Iexternal/vizdoom/src/posix/sdl \
   -Iexternal/sdl2/include \
   -I"$${generated_dir}" \
-  "$(location src/posix/sdl/i_system.mm)" \
+  "$(execpath src/posix/sdl/i_system.mm)" \
   -o "$@"
 """,
     target_compatible_with = select({

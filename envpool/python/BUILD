@@ -185,7 +185,8 @@ py_test(
     srcs = ["gymnasium_space_native_test.py"],
     imports = ["../.."],
     deps = [
-        "//envpool/atari:atari",
+        ":glfw_context",
+        "//envpool/atari",
         "//envpool/atari:atari_registration",
         "//envpool/mujoco:metaworld",
         "//envpool/mujoco:metaworld_registration",
@@ -195,7 +196,6 @@ py_test(
         "//envpool/mujoco:mujoco_gym_registration",
         "//envpool/mujoco:myosuite",
         "//envpool/mujoco:myosuite_registration",
-        ":glfw_context",
         requirement("absl-py"),
         requirement("gymnasium"),
         requirement("numpy"),

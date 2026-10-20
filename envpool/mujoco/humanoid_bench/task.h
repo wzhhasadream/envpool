@@ -7,6 +7,7 @@
 
 #include <array>
 #include <limits>
+#include <memory>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -41,8 +42,8 @@ class Task : public mujoco_gym::MujocoEnv {
   std::vector<double> obs_, control_;
 
  public:
-  Task(const std::string& xml, const std::string& task, int robot_dof,
-       int frame_skip, int max_steps, int frame_stack, int width, int height,
+  Task(const std::string& xml, std::string task, int robot_dof, int frame_skip,
+       int max_steps, int frame_stack, int width, int height,
        const std::string& camera_name, double stand_height, double randomness,
        const std::vector<std::string>& metric_names);
   void ResetTask(std::mt19937* gen);
@@ -51,7 +52,8 @@ class Task : public mujoco_gym::MujocoEnv {
   bool Terminated();
   void Simulate(const float* action);
   void ExportTaskState();
-  void Render(int width, int height, int camera_id, unsigned char* rgb) override;
+  void Render(int width, int height, int camera_id,
+              unsigned char* rgb) override;
   void RenderPixels(Array* target, bool reset);
 
  private:
@@ -76,4 +78,4 @@ class Task : public mujoco_gym::MujocoEnv {
 };
 
 }  // namespace humanoid_bench
-#endif
+#endif  // ENVPOOL_MUJOCO_HUMANOID_BENCH_TASK_H_

@@ -578,6 +578,20 @@ perl -Iperllib -I. macros/macros.pl version.mac 'macros/*.mac' 'output/*.mac'
 
     maybe(
         http_archive,
+        name = "humanoid_bench_source",
+        patch_args = ["-p1"],
+        patches = ["//third_party/humanoid_bench:kettle_default.patch"],
+        sha256 = "0edc6a01e1315914921a2be8a1eb59c274b6f8ca01cbf4625380a13edf14460f",
+        strip_prefix = "humanoid-bench-compatible-d198f7b49cf889d86e41fdcba6b174e6b235fd12",
+        urls = [
+            "https://github.com/wzhhasadream/humanoid-bench-compatible/archive/d198f7b49cf889d86e41fdcba6b174e6b235fd12.tar.gz",
+            "https://codeload.github.com/wzhhasadream/humanoid-bench-compatible/tar.gz/d198f7b49cf889d86e41fdcba6b174e6b235fd12",
+        ],
+        build_file = "//third_party/humanoid_bench:assets.BUILD",
+    )
+
+    maybe(
+        http_archive,
         name = "mujoco_gym_xml",
         sha256 = "96a5fc8345bd92b73a15fc25112d53a294f86fcace1c5e4ef7f0e052b5e1bdf4",
         strip_prefix = "gym-0.26.2/gym/envs/mujoco",

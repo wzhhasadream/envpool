@@ -26,7 +26,7 @@ Supported Families
   retains its existing discrete minimal-action default.
 
 Tasks from different native backends cannot be mixed. The constructor checks
-all state and action keys, shapes, dtypes, bounds, and non-task configuration.
+all state and action keys, shapes, data types, bounds, and non-task configuration.
 It does not silently pad observations or actions.
 
 Construction and Slot Assignment

@@ -183,6 +183,26 @@ To build a release version, type:
 
 This creates a wheel under ``bazel-bin/setup.runfiles/envpool/dist``.
 
+HumanoidBench assets in release wheels
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The standard Bazel build includes the complete resource closure for all 112
+HumanoidBench tasks in the EnvPool wheel itself. No separate HumanoidBench
+resource package or Python oracle is required at runtime. Other environment
+families retain their existing ``envpool-assets`` dependencies.
+
+The assets are fetched from the revision pinned in ``envpool/workspace0.bzl``.
+``third_party/humanoid_bench/assets.BUILD`` is generated from the registered
+models, including nested XML references, meshes, textures and asset licenses.
+The closure test detects missing resources and a stale generated ``filegroup``;
+the installed-wheel tests reset and step every HumanoidBench task.
+
+The complete HumanoidBench resources add approximately 76 MB compressed. The
+repository's wheel-size regression limit is therefore 160,000,000 bytes, with
+headroom for platform-specific native binaries. This is a build guard, not a
+package-index upload allowance. Before publishing a wheel, separately verify
+that the destination accepts its size; building and testing do not publish it.
+
 
 .. note ::
 

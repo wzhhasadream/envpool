@@ -52,11 +52,12 @@ auto GetRomPath(const std::string& base_path, const std::string& task) {
 
 // Canonical indices refer to the pinned ALE catalog, never to slot order.
 int AtariTaskIndex(const std::string& task) {
-  auto found = std::find(kAtariTaskNames.begin(), kAtariTaskNames.end(), task);
-  if (found == kAtariTaskNames.end()) {
-    throw std::invalid_argument("Unknown Atari task " + task);
+  for (std::size_t index = 0; index < kAtariTaskNames.size(); ++index) {
+    if (kAtariTaskNames[index] == task) {
+      return static_cast<int>(index);
+    }
   }
-  return static_cast<int>(found - kAtariTaskNames.begin());
+  throw std::invalid_argument("Unknown Atari task " + task);
 }
 
 template <typename Config>

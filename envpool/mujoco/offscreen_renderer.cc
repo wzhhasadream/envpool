@@ -344,12 +344,13 @@ class EglContext final : public GlContext {
     // Wheel repair renames libEGL; expose its entry point to MuJoCo's loader.
     static const void* egl_library = [] {
       Dl_info library{};
-      if (!dladdr(reinterpret_cast<void*>(eglGetProcAddress), &library)) {
+      if (dladdr(reinterpret_cast<void*>(eglGetProcAddress), &library) == 0) {
         throw std::runtime_error("failed to locate the loaded EGL library");
       }
       void* handle = dlopen(library.dli_fname, RTLD_NOW | RTLD_GLOBAL);
-      if (!handle)
+      if (handle == nullptr) {
         throw std::runtime_error("failed to expose the EGL entry point");
+      }
       return handle;
     }();
     (void)egl_library;
@@ -779,8 +780,9 @@ void OffscreenRenderer::Render(const mjModel* model, mjData* data, int width,
     if (scene_.ngeom + extra_geom_count > scene_.maxgeom) {
       throw std::runtime_error("Extra render geometry exceeds scene capacity");
     }
-    for (int i = 0; i < extra_geom_count; ++i)
+    for (int i = 0; i < extra_geom_count; ++i) {
       scene_.geoms[scene_.ngeom++] = extra_geoms[i];
+    }
     mjr_render(viewport, &scene_, &context_);
   };
 

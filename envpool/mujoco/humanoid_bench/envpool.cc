@@ -6,8 +6,10 @@
 
 using HumanoidBenchEnvSpec = PyEnvSpec<humanoid_bench::HumanoidBenchEnvSpec>;
 using HumanoidBenchEnvPool = PyEnvPool<humanoid_bench::HumanoidBenchEnvPool>;
-using HumanoidBenchPixelEnvSpec = PyEnvSpec<humanoid_bench::HumanoidBenchPixelEnvSpec>;
-using HumanoidBenchPixelEnvPool = PyEnvPool<humanoid_bench::HumanoidBenchPixelEnvPool>;
+using HumanoidBenchPixelEnvSpec =
+    PyEnvSpec<humanoid_bench::HumanoidBenchPixelEnvSpec>;
+using HumanoidBenchPixelEnvPool =
+    PyEnvPool<humanoid_bench::HumanoidBenchPixelEnvPool>;
 
 PYBIND11_MODULE(humanoid_bench_envpool, m) {
   REGISTER(m, HumanoidBenchEnvSpec, HumanoidBenchEnvPool)

@@ -37,12 +37,12 @@ describe one slot. For the example above, ``env.observation_space.shape`` is
 or batch samples from ``single_action_space`` for a subset. Spaces remain
 sized for ``num_envs`` when a subset or asynchronous call returns fewer rows.
 
-Same-step autoreset
--------------------
+Same-step automatic reset
+-------------------------
 
-``SameStepAutoReset`` converts native ``NEXT_STEP`` autoreset to Gymnasium's
-``SAME_STEP`` contract. It requires Gymnasium 1.1 or newer; the info format is
-verified against the pinned Gymnasium 1.2.3 implementation.
+``SameStepAutoReset`` converts native ``NEXT_STEP`` automatic reset to
+Gymnasium's ``SAME_STEP`` contract. It requires Gymnasium 1.1 or newer; the info
+format is verified against the pinned Gymnasium 1.2.3 implementation.
 
 When a slot terminates or truncates, the same ``step`` call resets that slot:
 
@@ -88,16 +88,17 @@ It does not resize, normalize, recolor, or reorder the frame history.
 
 * MuJoCo pixels use ``frame_stack`` for F and RGB's C=3.
 * Atari uses ``stack_num`` for F and ``gray_scale`` for C=1 or C=3.
-  Grayscale retains the trailing channel dimension even for a single frame.
+  Gray-scale images retain the trailing channel dimension even for a single
+  frame.
 * Dictionary observations are supported recursively. Three-dimensional uint8
-  pixel Box fields are transformed, and nonpixel fields remain unchanged.
+  pixel Box fields are transformed, and non-pixel fields remain unchanged.
 * Reset, step, and masked ``final_obs`` observations are all transformed.
   Both wrapper orders are supported.
 * Pixel-only wrapping supports asynchronous ``send``/``recv`` and
   ``async_reset`` without changing ``env_id`` routing. Combining it with
   ``SameStepAutoReset`` retains that adapter's synchronous-only restriction.
 * Both wrappers forward ``render`` unchanged, including ``env_ids`` and
-  ``camera_id``, and preserve rendering and autoreset metadata.
+  ``camera_id``, and preserve rendering and automatic reset metadata.
 
 Pixel transposes may be views; call ``np.ascontiguousarray`` if a downstream
 consumer requires contiguous storage. Neither Python adapter supports XLA;

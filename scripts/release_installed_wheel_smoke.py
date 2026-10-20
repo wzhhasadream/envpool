@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 from importlib.metadata import version
 from pathlib import Path
 
@@ -184,10 +185,26 @@ def main() -> None:
     required_package_files = [
         envpool_package / "vizdoom/bin/vizdoom",
         envpool_package / "vizdoom/bin/vizdoom.pk3",
+        envpool_package / "mujoco/humanoid_bench/registry.json",
+        envpool_package / "mujoco/humanoid_bench/LICENSE",
+        envpool_package / "mujoco/humanoid_bench/NOTICE",
     ]
     missing = [path for path in required_package_files if not path.exists()]
     if missing:
         raise RuntimeError(f"envpool wheel missing required files: {missing}")
+
+    humanoid_bench = envpool_package / "mujoco/humanoid_bench"
+    registry = json.loads((humanoid_bench / "registry.json").read_text())
+    missing_models = [
+        task_id
+        for task_id, task in registry["tasks"].items()
+        if not (humanoid_bench / "assets" / task["xml_file"]).is_file()
+    ]
+    if missing_models:
+        raise RuntimeError(
+            f"envpool wheel missing HumanoidBench models: {missing_models}"
+        )
+    print(f"HumanoidBench: {len(registry['tasks'])} model roots packaged")
 
     print(f"envpool installed at {envpool_package}")
 

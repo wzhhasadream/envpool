@@ -1,29 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Native HumanoidBench environments, using EnvPool's C++ worker pool."""
 
-import json
 import ctypes
+import json
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 from envpool.mujoco.humanoid_bench_envpool import (
-    _HumanoidBenchEnvPool, _HumanoidBenchEnvSpec,
-    _HumanoidBenchPixelEnvPool, _HumanoidBenchPixelEnvSpec,
+    _HumanoidBenchEnvPool,
+    _HumanoidBenchEnvSpec,
+    _HumanoidBenchPixelEnvPool,
+    _HumanoidBenchPixelEnvSpec,
 )
+
 from envpool.python.api import py_env
+from envpool.python.protocol import GymnasiumEnvPool
 
 # The native module loads MuJoCo before registering its bundled plugins.
-_plugins = [ctypes.CDLL(str(path)) for path in sorted((Path(__file__).parent / "plugins").glob("*.so"))]
+_plugins = [
+    ctypes.CDLL(str(path))
+    for path in sorted((Path(__file__).parent / "plugins").glob("*.so"))
+]
 
-HumanoidBenchEnvSpec, HumanoidBenchDMEnvPool, HumanoidBenchGymnasiumEnvPool = py_env(_HumanoidBenchEnvSpec, _HumanoidBenchEnvPool)
-HumanoidBenchPixelEnvSpec, HumanoidBenchPixelDMEnvPool, HumanoidBenchPixelGymnasiumEnvPool = py_env(_HumanoidBenchPixelEnvSpec, _HumanoidBenchPixelEnvPool)
+HumanoidBenchEnvSpec, HumanoidBenchDMEnvPool, HumanoidBenchGymnasiumEnvPool = (
+    py_env(_HumanoidBenchEnvSpec, _HumanoidBenchEnvPool)
+)
+(
+    HumanoidBenchPixelEnvSpec,
+    HumanoidBenchPixelDMEnvPool,
+    HumanoidBenchPixelGymnasiumEnvPool,
+) = py_env(_HumanoidBenchPixelEnvSpec, _HumanoidBenchPixelEnvPool)
 
 _registry = json.loads(Path(__file__).with_name("registry.json").read_text())
-_metric_indices = {name: index for index, name in enumerate(_registry["metrics"])}
+_metric_indices = {
+    name: index for index, name in enumerate(_registry["metrics"])
+}
 
 
-def _with_task_info(pool):
+def _with_task_info(pool: Any) -> None:
     convert = pool._to
 
-    def to_gymnasium(self, state_values, reset, return_info):
+    def to_gymnasium(
+        self: GymnasiumEnvPool,
+        state_values: list[np.ndarray],
+        reset: bool,
+        return_info: bool,
+    ) -> tuple[Any, ...]:
         result = convert(self, state_values, reset, return_info)
         info = result[-1]
         metrics = info.pop("metrics")

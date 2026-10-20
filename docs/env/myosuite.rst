@@ -34,14 +34,14 @@ dtype for these tasks; EnvPool retains its existing numeric ``solved`` dtype
 for both fields. ``success`` is available in state and pixel environments,
 including compatible multitask pools.
 
-EnvPool retains ``NEXT_STEP`` autoreset. ApexRL's ``SameStep`` vector wrapper
+EnvPool retains ``NEXT_STEP`` automatic reset. ApexRL's ``SameStep`` vector wrapper
 instead places terminal information in ``final_info``. Its
 ``avg_success_once`` and ``avg_success_end`` metrics are computed separately
 by `the evaluator
 <https://github.com/wzhhasadream/ApexRL/blob/bb4c8899164237d2a4e27b3bcd8e32b4b6c2c332/ApexRL/common/evaluate.py#L44-L54>`_.
 An evaluator using EnvPool directly must read terminal ``success`` from the
 returned step info, before the next call resets that slot; the alias does not
-add ``final_info`` or change autoreset behavior.
+add ``final_info`` or change automatic reset behavior.
 
 
 Env IDs

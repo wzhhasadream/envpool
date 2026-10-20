@@ -25,7 +25,10 @@ DOCKER_USER    = trinkle23897
 RELEASE_PYTHON ?= $(shell python3 -c 'import sys; print("{}.{}".format(sys.version_info[0], sys.version_info[1]))')
 RELEASE_SETUP_TARGET = //:setup_py$(subst .,,$(RELEASE_PYTHON))
 PYPI_WHEEL_PLAT ?= manylinux_2_28_x86_64
-WHEEL_SIZE_LIMIT_BYTES ?= 100000000
+# HumanoidBench's complete runtime asset closure adds about 76 MB compressed.
+# Keep a bounded 160 MB regression guard, with headroom for platform binaries.
+# This repository guard does not change any package index's upload quota.
+WHEEL_SIZE_LIMIT_BYTES ?= 160000000
 # Procgen links Qt, but vendoring Qt pulls a large Qt/ICU stack into
 # envpool.libs. Linux release wheels expect the system Qt runtime instead.
 AUDITWHEEL_EXCLUDE_LIBS ?= libQt5Core.so.5 libQt5Gui.so.5

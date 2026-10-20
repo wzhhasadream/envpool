@@ -57,9 +57,9 @@ The native path does the same. Both produce RGB bytes without cropping or
 normalization, but their layouts differ: ApexRL uses ``[B, F, H, W, C]`` and
 EnvPool uses ``[B, 3 * F, H, W]``. Convert Apex frames with
 ``frames.transpose(0, 1, 4, 2, 3).reshape(B, 3 * F, H, W)`` before comparing.
-ApexRL's vector wrapper uses same-step autoreset; EnvPool retains next-step
-autoreset. Compare terminal observations before applying that wrapper-level
-reset convention. ApexRL's current friction wrapper scales geometry friction
+ApexRL's vector wrapper uses same-step automatic reset; EnvPool retains
+next-step automatic reset. Compare terminal observations before applying that
+wrapper-level reset convention. ApexRL's current friction wrapper scales geometry friction
 only; native ``friction_multiplier`` additionally covers explicit pairs.
 
 Compatibility with the original library
@@ -74,15 +74,16 @@ actions without further synchronization.
 
 EnvPool publishes float32 rewards. The original ``dm_env`` reset timestep
 uses ``reward=None`` and ``discount=None``; EnvPool's batched FIRST timestep
-uses reward 0 and discount 1. Some native task families retain historical
-observation-key supersets, including Finger, Fish, and Humanoid variants.
+uses reward 0 and discount 1. Some native task families retain extra observation
+keys for historical compatibility, including Finger, Fish, and Humanoid variants.
 These API differences are separate from physics and per-step reward parity.
 
 QuadrupedEscape has a known reset-distribution difference: native terrain uses
 independent bumps on a 201-by-201 grid, while the original samples a 30-by-30
-grid and upsamples it with cubic interpolation. Same-state oracle comparisons
-synchronize the heightfield and therefore do not establish equivalent terrain
-distributions. This difference is not resolved by matching integer seeds.
+grid and increases its resolution with cubic interpolation. Same-state oracle
+comparisons synchronize the height field and therefore do not establish
+equivalent terrain distributions. This difference is not resolved by matching
+integer seeds.
 
 Native action bounds follow the original actuator limits. ApexRL can wrap
 those limits with ``RescaleAction(-1, 1)``, so normalized Apex actions must be

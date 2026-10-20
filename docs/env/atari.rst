@@ -90,9 +90,10 @@ first 210 rows of ALE's image, including ROMs with taller original screens.
 Native default rendering also uses this 210-by-160 crop. Oracle pixel
 comparisons apply the same explicit crop to the original ALE image; the two
 APIs do not have identical raw screen shapes for those games. In the pinned
-ROM catalog, Adventure, AirRaid, KeystoneKapers, KingKong, Klax, LaserGates,
-MrDo, Pacman, SirLancelot, and SpaceWar have 250 rows; Carnival has 214,
-JourneyEscape has 230, and Pooyan has 220.
+ROM catalog, ``Adventure``, ``AirRaid``, ``KeystoneKapers``, ``KingKong``,
+``Klax``, ``LaserGates``, ``MrDo``, ``Pacman``, ``SirLancelot``, and
+``SpaceWar`` have 250 rows; ``Carnival`` has 214, ``JourneyEscape`` has 230,
+and ``Pooyan`` has 220.
 
 
 Action Space
@@ -177,7 +178,7 @@ and
 LostLuggage explicitly
 `documents that FIRE restarts the game <https://github.com/Farama-Foundation/Arcade-Learning-Environment/blob/72a87826916aa0b696096c991faa982992ff80ec/src/ale/games/supported/LostLuggage.hpp#L47-L48>`_.
 Validation checks every selected game's actual ALE action values and ordering,
-not a hardcoded game-name exclusion. Ordinary ``make`` calls retain each
+not a hard-coded game-name exclusion. Ordinary ``make`` calls retain each
 game's minimal action space by default, and both games keep their existing
 single-game behavior.
 
@@ -197,7 +198,7 @@ For example:
         envs_per_task=2,
     )
 
-All slots share preprocessing settings, including resolution, color mode,
+All slots share pre-processing settings, including resolution, color mode,
 stacking, frame skipping, reward clipping, life-loss handling, random no-ops,
 fire reset, sticky-action probability, mode, and difficulty. A selected mode or
 difficulty must be valid for every game. Compatible complete observation and
@@ -229,7 +230,7 @@ truncation, RAM, lives, elapsed steps, and rendered frames bitwise against
 independently seeded single-game pools. It covers all 102 games with a
 canonical 18-action space, verifies rejection and unchanged single-game
 behavior for the two incompatible games, and tests partial resets,
-asynchronous batches, different slot horizons, preprocessing options, and
+asynchronous batches, different slot horizons, pre-processing options, and
 sticky actions. The continuous suite additionally checks all 104 games
 against the original ``ale-py==0.11.2`` Gymnasium wrapper, with pinned
 Python 3.12, Gymnasium ``1.2.3``, and NumPy ``2.4.3`` in a test-only subprocess.

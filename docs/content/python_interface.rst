@@ -116,7 +116,7 @@ respectively.
 Optional Gymnasium adapters
 ---------------------------
 
-For explicit same-step autoreset and ``[B, F, H, W, C]`` pixel observations,
+For explicit same-step automatic reset and ``[B, F, H, W, C]`` pixel observations,
 see :doc:`gymnasium_wrappers`. These wrappers preserve the default native API
 and can be composed in either order.
 

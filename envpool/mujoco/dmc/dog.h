@@ -42,12 +42,13 @@ bool DogHasBall(const std::string& task_name) { return task_name == "fetch"; }
 int DogTaskIndex(const std::string& task_name) {
   static const std::array<std::string, 5> names = {"fetch", "run", "stand",
                                                    "trot", "walk"};
-  auto found = std::find(names.begin(), names.end(), task_name);
-  if (found == names.end()) {
-    throw std::invalid_argument("Unknown task_name " + task_name +
-                                " for dmc dog.");
+  for (std::size_t index = 0; index < names.size(); ++index) {
+    if (names[index] == task_name) {
+      return static_cast<int>(index);
+    }
   }
-  return static_cast<int>(found - names.begin());
+  throw std::invalid_argument("Unknown task_name " + task_name +
+                              " for dmc dog.");
 }
 
 template <typename Config>

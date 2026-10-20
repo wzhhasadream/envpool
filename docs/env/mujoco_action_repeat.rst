@@ -35,12 +35,13 @@ reaches its time limit. It never automatically starts another episode inside
 the same repeated step. The next call retains EnvPool's existing next-step
 reset behavior.
 
-The public float32 reward is the undiscounted sum of the executed control-step
-rewards. Accumulation uses double precision. ``info["per_timestep_reward"]``
-is a per-environment scalar containing only the final control-step reward
-(float32 for Gym/DMC, float64 for MyoSuite/MetaWorld). Other reward components,
-success flags, and task diagnostics also describe the final control step.
-They are not sums over the repetition window.
+The public float32 reward is the sum of the executed control-step rewards,
+without discounting. Accumulation uses double precision.
+``info["per_timestep_reward"]`` is a per-environment scalar containing only
+the final control-step reward (float32 for Gym and DMC, float64 for MyoSuite
+and MetaWorld). Other reward components, success flags, and task diagnostics
+also describe the final control step. They are not sums over the repetition
+window.
 
 With the default repeat of 1, existing step timing and diagnostic meanings
 are unchanged. The new ``per_timestep_reward`` field is additive; clients

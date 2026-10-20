@@ -72,6 +72,7 @@ _FAMILY_SMOKE_TASKS: dict[str, tuple[str, ...]] = {
     "envpool.minigrid": ("MiniGrid-DoorKey-8x8-v0",),
     "envpool.mujoco.dmc": ("WalkerWalk-v1",),
     "envpool.mujoco.gym": ("Ant-v5",),
+    "envpool.mujoco.humanoid_bench": ("h1-walk-v0",),
     "envpool.mujoco.metaworld": ("MetaWorld/Reach-v3",),
     "envpool.mujoco.playground": (
         "Go1JoystickFlatTerrain-v1",
@@ -238,6 +239,25 @@ class _MakeTest(absltest.TestCase):
         for import_path, task_ids in smoke_tasks.items():
             with self.subTest(import_path=import_path):
                 self.check_step(list(task_ids))
+
+    def test_make_humanoid_bench(self) -> None:
+        from envpool.registration import registry
+
+        task_ids = sorted(
+            task_id
+            for task_id, (import_path, _, _) in registry.specs.items()
+            if import_path == "envpool.mujoco.humanoid_bench"
+        )
+        self.assertNotEmpty(task_ids)
+        # Exercise every model's asset closure in installed release wheels.
+        for task_id in task_ids:
+            with self.subTest(task_id=task_id):
+                env = envpool.make_gymnasium(task_id, num_envs=1, num_threads=1)
+                try:
+                    env.reset()
+                    env.step(env.action_space.sample() * 0)
+                finally:
+                    env.close()
 
     def test_make_atari(self) -> None:
         self.assertRaises(TypeError, envpool.make, "Pong-v5")

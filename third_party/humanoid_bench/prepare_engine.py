@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Bundle the official Linux MuJoCo 3.6.0 engine and its model decoders."""
 
 import shutil
@@ -15,7 +17,20 @@ if len(sys.argv) > 1:
 else:
     cache = root / "build/mujoco-official"
     cache.mkdir(parents=True, exist_ok=True)
-    subprocess.run([sys.executable, "-m", "pip", "download", "--no-deps", "--only-binary=:all:", "mujoco==3.6.0", "--dest", str(cache)], check=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "download",
+            "--no-deps",
+            "--only-binary=:all:",
+            "mujoco==3.6.0",
+            "--dest",
+            str(cache),
+        ],
+        check=True,
+    )
     with zipfile.ZipFile(next(cache.glob("mujoco-3.6.0-*.whl"))) as wheel:
         wheel.extractall(cache / "unpacked")
     source = cache / "unpacked/mujoco"
@@ -26,7 +41,15 @@ libraries.mkdir(exist_ok=True)
 shutil.copy2(engine, libraries / engine.name)
 for name in ["libobj_decoder.so", "libstl_decoder.so", "libsensor.so"]:
     shutil.copy2(source / "plugin" / name, plugins / name)
-    subprocess.run(["patchelf", "--set-rpath", "$ORIGIN/../../../../envpool.libs", str(plugins / name)], check=True)
+    subprocess.run(
+        [
+            "patchelf",
+            "--set-rpath",
+            "$ORIGIN/../../../../envpool.libs",
+            str(plugins / name),
+        ],
+        check=True,
+    )
 licenses = next(source.parent.glob("mujoco-3.6.0.dist-info/licenses"))
 shutil.copytree(licenses, package / "mujoco_licenses", dirs_exist_ok=True)
 print(engine)

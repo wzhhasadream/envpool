@@ -17,6 +17,7 @@
 #ifndef ENVPOOL_ATARI_CONTINUOUS_ACTION_H_
 #define ENVPOOL_ATARI_CONTINUOUS_ACTION_H_
 
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -57,7 +58,8 @@ inline ContinuousAction ConvertContinuousAction(const float* action,
   const int vertical =
       static_cast<int>(y > threshold) - static_cast<int>(y < threshold);
   // Rows: left, center, right. Columns: down, center, up.
-  constexpr int directions[3][3] = {{9, 4, 7}, {5, 0, 2}, {8, 3, 6}};
+  constexpr std::array<std::array<int, 3>, 3> directions = {
+      {{9, 4, 7}, {5, 0, 2}, {8, 3, 6}}};
   int index = directions[horizontal + 1][vertical + 1];
   if (action[2] > threshold) {
     index = index == 0 ? 1 : index + 8;

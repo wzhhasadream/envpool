@@ -1,7 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Copy pinned HumanoidBench assets and apply the MuJoCo XML schema fix."""
 
-import importlib.util
 import importlib.metadata
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -10,13 +12,41 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 try:
-    provenance = json.loads(importlib.metadata.distribution("humanoid-bench").read_text("direct_url.json") or "{}")
+    provenance = json.loads(
+        importlib.metadata.distribution("humanoid-bench").read_text(
+            "direct_url.json"
+        )
+        or "{}"
+    )
 except importlib.metadata.PackageNotFoundError:
     provenance = {}
-if provenance.get("vcs_info", {}).get("commit_id") != "d198f7b49cf889d86e41fdcba6b174e6b235fd12":
-    subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "humanoid-bench @ git+https://github.com/wzhhasadream/humanoid-bench-compatible.git@d198f7b49cf889d86e41fdcba6b174e6b235fd12"], check=True)
-source = Path(next(iter(importlib.util.find_spec("humanoid_bench").submodule_search_locations)))
-destination = Path(__file__).resolve().parents[2] / "envpool/mujoco/humanoid_bench/assets"
+if (
+    provenance.get("vcs_info", {}).get("commit_id")
+    != "d198f7b49cf889d86e41fdcba6b174e6b235fd12"
+):
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "humanoid-bench @ git+https://github.com/wzhhasadream/humanoid-bench-compatible.git@d198f7b49cf889d86e41fdcba6b174e6b235fd12",
+        ],
+        check=True,
+    )
+source = Path(
+    next(
+        iter(
+            importlib.util.find_spec(
+                "humanoid_bench"
+            ).submodule_search_locations
+        )
+    )
+)
+destination = (
+    Path(__file__).resolve().parents[2] / "envpool/mujoco/humanoid_bench/assets"
+)
 shutil.copytree(source / "assets", destination, dirs_exist_ok=True)
 kettle = destination / "kitchen/adept_models/kitchen/assets/kettle_asset.xml"
 tree = ET.parse(kettle)

@@ -53,14 +53,14 @@ deterministic across thread counts but does not reproduce NumPy's random
 stream, so identical seeds do not imply identical oracle initial states.
 Pixel coverage is four post-step frames per selected task. Full-episode
 alignment and other operating systems have not been validated. JAX JIT was
-tested on CPU with JAX/JAXlib 0.6.0.
+tested on CPU with JAX and ``jaxlib`` 0.6.0.
 
 Build from source
 -----------------
 
 The developer build requires Linux x86_64, CPython 3.11, a C++ toolchain,
 ``curl``, ``patchelf``, ``setuptools``, ``wheel`` and the EnvPool runtime
-dependencies. Install JAXlib 0.6.0 to reproduce the tested FFI build.
+dependencies. Install ``jaxlib`` 0.6.0 to reproduce the tested FFI build.
 From the repository root, run:
 
 .. code-block:: bash

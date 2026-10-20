@@ -18,10 +18,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from absl import logging
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from envpool.atari.atari_envpool import _continuous_action
 
 import envpool.atari.registration as reg
@@ -33,6 +34,10 @@ def _oracle_command() -> list[str]:
     if override:
         return [override]
     executable = Path(__file__).with_name("atari_continuous_oracle_probe")
+    # Bazel's extensionless launcher is a Python script, not a Windows binary.
+    # Use the native launcher to preserve the oracle's isolated Python runtime.
+    if sys.platform == "win32":
+        executable = executable.with_suffix(".exe")
     if executable.is_file():
         return [str(executable)]
     # Direct local runs may use an interpreter containing the same pinned
@@ -41,6 +46,60 @@ def _oracle_command() -> list[str]:
         sys.executable,
         str(Path(__file__).with_name("atari_continuous_oracle_probe.py")),
     ]
+
+
+class OracleCommandTest(parameterized.TestCase):
+    """Select executable launchers without changing the oracle runtime."""
+
+    @parameterized.parameters("win32", "linux", "darwin")
+    def test_explicit_override_takes_precedence(self, platform: str) -> None:
+        """Keep an explicit command intact, including paths containing spaces."""
+        override = "custom oracle path/oracle.exe"
+        with (
+            mock.patch.dict(os.environ, ENVPOOL_ATARI_ORACLE_PROBE=override),
+            mock.patch.object(sys, "platform", platform),
+            mock.patch.object(Path, "is_file") as is_file,
+        ):
+            self.assertEqual(_oracle_command(), [override])
+        is_file.assert_not_called()
+
+    @parameterized.named_parameters(
+        ("windows_both_launchers", "win32", ("", ".exe"), ".exe"),
+        ("windows_exe_only", "win32", (".exe",), ".exe"),
+        ("linux_both_launchers", "linux", ("", ".exe"), ""),
+        ("macos_both_launchers", "darwin", ("", ".exe"), ""),
+        ("linux_extensionless_only", "linux", ("",), ""),
+        ("windows_script_only", "win32", ("",), ".py"),
+        ("windows_no_launcher", "win32", (), ".py"),
+        ("linux_exe_only", "linux", (".exe",), ".py"),
+        ("linux_no_launcher", "linux", (), ".py"),
+        ("macos_no_launcher", "darwin", (), ".py"),
+    )
+    def test_platform_launcher_selection(
+        self,
+        platform: str,
+        available_suffixes: tuple[str, ...],
+        expected_suffix: str,
+    ) -> None:
+        """Never pass a script directly to Windows subprocess creation."""
+        executable = Path(__file__).with_name("atari_continuous_oracle_probe")
+        available = {
+            executable.with_suffix(suffix) for suffix in available_suffixes
+        }
+        expected = [str(executable.with_suffix(expected_suffix))]
+        if expected_suffix == ".py":
+            expected.insert(0, sys.executable)
+        with (
+            mock.patch.dict(os.environ, ENVPOOL_ATARI_ORACLE_PROBE=""),
+            mock.patch.object(sys, "platform", platform),
+            mock.patch.object(
+                Path,
+                "is_file",
+                autospec=True,
+                side_effect=available.__contains__,
+            ),
+        ):
+            self.assertEqual(_oracle_command(), expected)
 
 
 class AtariContinuousAlignTest(absltest.TestCase):

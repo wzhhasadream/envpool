@@ -27,20 +27,50 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "humanoid_bench_env",
     srcs = ["humanoid_bench/task.cc"],
-    hdrs = ["humanoid_bench/task.h", "humanoid_bench/humanoid_bench.h"],
-    deps = [":mujoco_gym_env", ":mujoco_dmc_env", "@mujoco//:mujoco_obj_decoder_plugin_lib", "@mujoco//:mujoco_touch_grid_plugin_lib"],
+    hdrs = [
+        "humanoid_bench/humanoid_bench.h",
+        "humanoid_bench/task.h",
+    ],
+    deps = [
+        ":mujoco_dmc_env",
+        ":mujoco_gym_env",
+        "@mujoco//:mujoco_obj_decoder_plugin_lib",
+        "@mujoco//:mujoco_touch_grid_plugin_lib",
+    ],
 )
 
 pybind_extension(
     name = "humanoid_bench_envpool",
     srcs = ["humanoid_bench/envpool.cc"],
-    deps = [":humanoid_bench_env", "//envpool/core:py_envpool"],
+    deps = [
+        ":humanoid_bench_env",
+        "//envpool/core:py_envpool",
+    ],
+)
+
+copy_to_directory(
+    name = "gen_humanoid_bench_assets",
+    srcs = ["@humanoid_bench_source//:assets"],
+    out = "humanoid_bench/assets",
+    strip_prefix = "humanoid_bench/assets/",
 )
 
 py_library(
     name = "humanoid_bench",
     srcs = ["humanoid_bench/__init__.py"],
-    data = [":humanoid_bench_envpool", "humanoid_bench/registry.json", "humanoid_bench/LICENSE", "humanoid_bench/NOTICE"] + glob(["humanoid_bench/assets/**", "humanoid_bench/plugins/*", "humanoid_bench/mujoco_licenses/**"], allow_empty = True),
+    data = [
+        "humanoid_bench/LICENSE",
+        "humanoid_bench/NOTICE",
+        "humanoid_bench/registry.json",
+        ":gen_humanoid_bench_assets",
+        ":humanoid_bench_envpool",
+    ] + glob(
+        [
+            "humanoid_bench/plugins/*",
+            "humanoid_bench/mujoco_licenses/**",
+        ],
+        allow_empty = True,
+    ),
     imports = ["../.."],
     deps = ["//envpool/python:api"],
 )
@@ -83,10 +113,10 @@ py_library(
     srcs = ["__init__.py"],
     imports = ["../.."],
     deps = [
+        ":humanoid_bench",
         ":metaworld",
         ":mujoco_dmc",
         ":mujoco_gym",
-        ":humanoid_bench",
         ":myosuite",
         ":playground",
         ":robotics",
@@ -339,8 +369,8 @@ cc_library(
     ],
     data = [":gen_metaworld_assets"],
     deps = [
-        ":robotics_env",
         ":metaworld_action_utils",
+        ":robotics_env",
         "//envpool/core:async_envpool",
     ],
 )
@@ -1118,8 +1148,8 @@ py_test(
     name = "dmc_multitask_test_python",
     size = "large",
     srcs = ["dmc/multitask_test.py"],
-    main = "dmc/multitask_test.py",
     imports = ["../.."],
+    main = "dmc/multitask_test.py",
     deps = [
         ":mujoco_dmc",
         ":mujoco_dmc_registration",
@@ -1134,8 +1164,8 @@ py_test(
     name = "myosuite_success_info_test",
     size = "large",
     srcs = ["myosuite/success_info_test.py"],
-    main = "myosuite/success_info_test.py",
     imports = ["../.."],
+    main = "myosuite/success_info_test.py",
     deps = [
         ":myosuite",
         ":myosuite_registration",
@@ -1151,8 +1181,8 @@ py_test(
     name = "myosuite_multitask_test",
     size = "large",
     srcs = ["myosuite/multitask_test.py"],
-    main = "myosuite/multitask_test.py",
     imports = ["../.."],
+    main = "myosuite/multitask_test.py",
     deps = [
         ":myosuite",
         ":myosuite_registration",
@@ -1167,8 +1197,8 @@ py_test(
     name = "metaworld_multitask_test",
     size = "large",
     srcs = ["metaworld/multitask_test.py"],
-    main = "metaworld/multitask_test.py",
     imports = ["../.."],
+    main = "metaworld/multitask_test.py",
     deps = [
         ":metaworld",
         ":metaworld_registration",
