@@ -52,10 +52,13 @@ class CartpoleEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("balance")));
+                    "task_name"_.Bind(std::string("balance")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "cartpole");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     const std::string task_name = conf["task_name"_];
@@ -72,6 +75,7 @@ class CartpoleEnvFns {
                                " for dmc cartpole.");
     }
     return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "info:task_id"_.Bind(Spec<int>({-1}, {0, 5})),
                     "obs:position"_.Bind(StackSpec(
                         Spec<mjtNum>({1 + 2 * n_poles}), conf["frame_stack"_])),
                     "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({1 + n_poles}),
@@ -100,6 +104,8 @@ class CartpoleEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   int id_slider_, id_hinge1_;
   bool is_sparse_, is_swingup_;
 
@@ -107,30 +113,33 @@ class CartpoleEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   std::unique_ptr<mjtNum> qvel0_;
 #endif
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
 
   CartpoleEnvBase(const Spec& spec, int env_id)
       : Env<EnvSpecT>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_],
-                  GetCartpoleXML(spec.config["base_path"_],
-                                 spec.config["task_name"_]),
-                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
-                  spec.config["frame_stack"_],
-                  RenderWidthOrDefault<kFromPixels>(spec.config),
-                  RenderHeightOrDefault<kFromPixels>(spec.config),
-                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
-                  spec.config["action_repeat"_],
-                  spec.config["friction_multiplier"_]),
+        MujocoEnv(
+            spec.config["base_path"_],
+            GetCartpoleXML(spec.config["base_path"_],
+                           DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("cartpole", DmcTaskName(spec.config, env_id))),
         id_slider_(GetQposId(model_, "slider")),
         id_hinge1_(GetQposId(model_, "hinge_1")),
-        is_sparse_(spec.config["task_name"_] == "balance_sparse" ||
-                   spec.config["task_name"_] == "swingup_sparse"),
-        is_swingup_(spec.config["task_name"_] == "swingup" ||
-                    spec.config["task_name"_] == "swingup_sparse" ||
-                    spec.config["task_name"_] == "two_poles" ||
-                    spec.config["task_name"_] == "three_poles") {
+        is_sparse_(DmcTaskName(spec.config, env_id) == "balance_sparse" ||
+                   DmcTaskName(spec.config, env_id) == "swingup_sparse"),
+        is_swingup_(DmcTaskName(spec.config, env_id) == "swingup" ||
+                    DmcTaskName(spec.config, env_id) == "swingup_sparse" ||
+                    DmcTaskName(spec.config, env_id) == "two_poles" ||
+                    DmcTaskName(spec.config, env_id) == "three_poles") {
 #ifdef ENVPOOL_TEST
     qvel0_.reset(new mjtNum[model_->nv]);
 #endif
@@ -209,6 +218,7 @@ class CartpoleEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

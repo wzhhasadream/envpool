@@ -31,11 +31,12 @@ sys.modules["envpool.entry"] = types.ModuleType("envpool.entry")
 """
     code += "\n".join(f"import {module}" for module in modules)
     if task_ids:
+        # The minimal Bazel target omits envpool's package-level API exports.
         code += f"""
-import envpool
+from envpool.registration import make_gymnasium
 import envpool.mujoco.humanoid_bench.registration
 for task_id in {task_ids!r}:
-    env = envpool.make_gymnasium(task_id, num_envs=1, num_threads=1)
+    env = make_gymnasium(task_id, num_envs=1, num_threads=1)
     try:
         env.reset()
         env.step(env.action_space.sample() * 0)

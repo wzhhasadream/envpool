@@ -6,6 +6,13 @@
 
 [![PyPI](https://img.shields.io/pypi/v/envpool)](https://pypi.org/project/envpool/) [![Downloads](https://static.pepy.tech/personalized-badge/envpool?period=total&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20Download)](https://pepy.tech/project/envpool) [![arXiv](https://img.shields.io/badge/arXiv-2206.10558-b31b1b.svg)](https://arxiv.org/abs/2206.10558) [![Read the Docs](https://img.shields.io/readthedocs/envpool)](https://envpool.readthedocs.io/) [![Unittest](https://github.com/sail-sg/envpool/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/sail-sg/envpool/actions/workflows/test.yml) [![Coverage](https://sail-sg.github.io/envpool/coverage-badge.svg)](https://sail-sg.github.io/envpool/) [![GitHub issues](https://img.shields.io/github/issues/sail-sg/envpool)](https://github.com/sail-sg/envpool/issues) [![GitHub stars](https://img.shields.io/github/stars/sail-sg/envpool)](https://github.com/sail-sg/envpool/stargazers) [![GitHub forks](https://img.shields.io/github/forks/sail-sg/envpool)](https://github.com/sail-sg/envpool/network) [![GitHub license](https://img.shields.io/github/license/sail-sg/envpool)](https://github.com/sail-sg/envpool/blob/main/LICENSE)
 
+> **Fork status:** this repository's `main` prepares `1.2.5+apex.hb2`, including
+> native multi-task pools for every compatible DMC group. Published
+> [hb1 wheels](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
+> remain available, but do not contain the expanded DMC support. hb2 wheels are
+> not published yet. The badges and hosted documentation above describe
+> upstream EnvPool; use this repository's linked documentation for fork features.
+
 **EnvPool** is a C++-based batched environment pool with pybind11 and thread pool. It has high performance (\~1M raw FPS with Atari games, \~3M raw FPS with MuJoCo simulator on DGX-A100) and compatible APIs (supports Gymnasium and dm\_env, both sync and async, both single and multi player environment). Currently it supports:
 
 - [x] [Atari games](https://envpool.readthedocs.io/en/latest/env/atari.html)
@@ -24,6 +31,9 @@
 - [x] [PGX](https://envpool.readthedocs.io/en/latest/env/pgx.html)
 - [x] [Jumanji](https://envpool.readthedocs.io/en/latest/env/jumanji.html)
 - [x] [MuJoCo Playground](https://envpool.readthedocs.io/en/latest/env/mujoco_playground.html)
+- [x] [Native HumanoidBench](docs/env/humanoid_bench.rst): 112 registered IDs
+- [x] [Native multi-task pools](docs/env/multitask.rst): compatible DMC,
+  MetaWorld, MyoSuite, and Atari tasks
 
 Here are EnvPool's several highlights:
 
@@ -50,9 +60,36 @@ Check out our [arXiv paper](https://arxiv.org/abs/2206.10558) for more details!
 
 ## Installation
 
-### PyPI
+### This fork: published hb1 versus hb2 source
 
-EnvPool is currently hosted on [PyPI](https://pypi.org/project/envpool/). It supports Python 3.11-3.14 on Linux, macOS, and Windows.
+The existing [verified hb1 prerelease](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
+contains 16 wheels for standard CPython 3.11-3.14 on Linux x86_64/aarch64,
+macOS Apple Silicon arm64, and Windows AMD64. Download the wheel matching
+your interpreter and operating system, then install that exact file. For
+example, **Linux x86_64 with CPython 3.12**:
+
+```bash
+python -m pip install --force-reinstall "https://github.com/wzhhasadream/envpool/releases/download/wheels-1.2.5-apex.hb1-1676bc9/envpool-1.2.5%2Bapex.hb1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+python -c "import envpool; print(envpool.__version__)"
+```
+
+This installs `1.2.5+apex.hb1`, **not** the comprehensive DMC mixing added in
+hb2. That hb1 release includes existing Dog mixing, other supported multi-task
+backends, native HumanoidBench, and the optional Gymnasium wrappers. Use
+`--force-reinstall` when replacing an older wheel bearing the same hb1 version.
+The distinct hb2 version avoids this same-version ambiguity.
+
+The current hb2 source must be built with the repository's
+[source-build instructions](docs/content/build.rst); installing a source
+checkout with pip alone does not compile the native extensions. Fresh hb2
+wheel builds and full-platform checks are pending. Do not substitute an hb1
+wheel when testing the hb2 examples below. No hb2 package has been published
+to PyPI.
+
+### Upstream PyPI package
+
+Upstream EnvPool is hosted on [PyPI](https://pypi.org/project/envpool/).
+An unqualified PyPI installation does not select this fork's hb2 changes.
 
 You can simply install EnvPool with the following command:
 
@@ -91,7 +128,11 @@ Please refer to the [guideline](https://envpool.readthedocs.io/en/latest/content
 
 ## Documentation
 
-The tutorials and API documentation are hosted on [envpool.readthedocs.io](https://envpool.readthedocs.io).
+Upstream tutorials and API documentation are hosted on [envpool.readthedocs.io](https://envpool.readthedocs.io).
+For this fork, start with [DMC tasks](docs/env/dm_control.rst),
+[the complete multi-task compatibility groups](docs/env/multitask.rst),
+[optional Gymnasium wrappers](docs/content/gymnasium_wrappers.rst), and
+[known limitations](KNOWN_LIMITATIONS.md).
 
 The example scripts are under [examples/](https://github.com/sail-sg/envpool/tree/main/examples) folder; benchmark scripts are under [benchmark/](https://github.com/sail-sg/envpool/tree/main/benchmark) folder.
 
@@ -149,7 +190,7 @@ import numpy as np
 # make Gymnasium env
 env = envpool.make("Pong-v5", env_type="gymnasium", num_envs=100)
 # or use envpool.make_gymnasium(...)
-obs = env.reset()  # should be (100, 4, 84, 84)
+obs, info = env.reset()  # obs shape: (100, 4, 84, 84)
 act = np.zeros(100, dtype=int)
 obs, rew, term, trunc, info = env.step(act)
 ```
@@ -282,6 +323,91 @@ environment returns `(3, H, W)`; with `frame_stack=3`, EnvPool stacks frames on
 the channel dimension and returns `(9, H, W)`. This matches the usual PyTorch
 `BCHW` convention directly. If `render_width` / `render_height` are omitted,
 EnvPool defaults them to `84`.
+
+### Native Multi-Task Pools (hb2)
+
+All 51 registered DMC tasks across 19 domains are covered by **30 compatible
+state groups** and **27 pixel groups**. A group may contain just one task.
+This does not mean that all 51 tasks can be mixed together: different domains,
+model topologies, or meaningful state contracts are rejected, without padding.
+See the [complete group listing and examples](docs/env/multitask.rst).
+
+```python
+import envpool
+
+env = envpool.make_multitask(
+    ["HumanoidStand-v1", "HumanoidWalk-v1", "HumanoidRun-v1"],
+    env_type="gymnasium",
+    envs_per_task=[2, 4, 2],
+    seed=list(range(8)),
+)
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+env.close()
+```
+
+Regular Humanoid has 21 actions. The separate CMU domain has 56 actions and
+supports its own stand/walk/run pool; it cannot join regular Humanoid.
+All four Manipulator tasks can share a pool while retaining their own ball,
+peg, and receptacle scenes. Finger spin/turn, Fish upright/swim, and Humanoid
+pure-state/feature-state combinations require `from_pixels=True`; their
+different meaningful state observations cannot be mixed in state mode.
+
+Each slot keeps its task, original model, seed stream, and task episode limit
+through resets. `env.env_task_ids[env_id]` records the assigned public ID.
+`info["task_id"]` is a canonical domain-local numeric ID, not the task's input
+list position. DMC IDs are alphabetical by original task name, for example
+Walker `run=0, stand=1, walk=2`. The field is additive for standalone DMC too.
+For asynchronous batches, route actions by returned `info["env_id"]`, never
+by row number or task ID. Task identity is not automatically added to the
+Gymnasium observation.
+
+### Optional Gymnasium Wrappers
+
+Wrappers are explicit adapters; the native defaults and task logic are unchanged.
+`SameStepAutoReset` provides synchronous Gymnasium same-step reset with terminal
+observations in `info["final_obs"]` and terminal diagnostics in
+`info["final_info"]`. `PixelObservationLayout` changes `[B, F*C, H, W]` pixels
+to `[B, F, H, W, C]` without resizing or changing frame order:
+
+```python
+native = envpool.make_multitask(
+    ["WalkerStand-v1", "WalkerWalk-v1", "WalkerRun-v1"],
+    envs_per_task=2,
+    from_pixels=True,
+    frame_stack=3,
+)
+env = envpool.PixelObservationLayout(envpool.SameStepAutoReset(native))
+obs, info = env.reset()
+assert obs.shape == (6, 3, 84, 84, 3)
+env.close()
+```
+
+Both wrapper orders are supported. Same-step reset requires a synchronous,
+single-player pool and Gymnasium 1.1 or newer. Pixel layout alone supports
+asynchronous send/receive. See [wrapper contracts](docs/content/gymnasium_wrappers.rst)
+for validity masks, subset operations, and terminal success handling.
+
+**Atari caveat:** do not combine `SameStepAutoReset` with
+`episodic_life=True` if standard life-loss pseudo-resets are needed: its explicit
+reset restarts the entire game on a life loss. Keep native `NEXT_STEP` reset
+with optional `PixelObservationLayout`, or use `episodic_life=False` for
+full-game same-step resets. This existing behavior is unchanged.
+
+### Validation Status
+
+The hb2 DMC change passed local Linux validation: nine Bazel targets containing
+209 Python cases and 14 C++ cases, including all compatible groups, rejection
+cases, standalone parity, asynchronous IDs, reset/horizon behavior, pixels,
+and existing oracle/render checks. All 7,711 compared pre-existing standalone
+output arrays matched the published hb1 runtime byte-for-byte. These are
+bounded regression results, not universal upstream equivalence.
+
+The fresh hb2 full-platform Bazel and installed-wheel matrices remain pending.
+The earlier hb1 wheel matrix passed, but its separate comprehensive suite had
+Windows graphics failures and a PGX timeout; that is not all-green CI for hb2.
+See [current workflows](https://github.com/wzhhasadream/envpool/actions) and
+[known limitations](KNOWN_LIMITATIONS.md) before treating a build as release-ready.
 
 ## Contributing
 

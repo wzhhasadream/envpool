@@ -26,6 +26,127 @@ EnvPool implements the ``suite.ALL_TASKS`` task set from
 ``dm_control==1.0.38``.
 
 
+Native multi-task pools
+-----------------------
+
+The expanded groups below are part of the ``1.2.5+apex.hb2`` source.
+Published ``hb1`` wheels do not include this extension, and ``hb2`` wheels have not
+been published yet. See :doc:`multitask` for version and installation scope.
+
+All 51 registered DMC tasks support ``envpool.make_multitask`` in compatible
+same-domain groups. The result is one ordinary native pool with fixed task
+assignments, not a Python collection of independently stepped pools. Each
+slot owns the assigned task's original model, reset logic, reward,
+termination behavior, and episode limit. Existing single-task behavior is
+preserved, with the additive ``info["task_id"]`` field on both single-task
+and multi-task results.
+
+See :doc:`multitask` for the complete state and pixel compatibility groups,
+including every public task ID. State contracts must match in meaning as well
+as shape; historical extra observation keys in Finger, Fish, and Humanoid do
+not make their different state contracts interchangeable. The constructor
+rejects incompatible groups rather than padding observations or actions.
+
+For example, Walker's three tasks share one state/action contract:
+
+.. code-block:: python
+
+   import envpool
+   import numpy as np
+
+   walker = envpool.make_multitask(
+       ["WalkerRun-v1", "WalkerStand-v1", "WalkerWalk-v1"],
+       env_type="gymnasium",
+       envs_per_task=[2, 1, 3],
+       seed=[10, 11, 12, 13, 14, 15],
+   )
+   obs, info = walker.reset()
+   # Slots 0--1 run, slot 2 stands, and slots 3--5 walk.
+   # Canonical task IDs in slot order: [0, 0, 1, 2, 2, 2].
+   actions = np.zeros((6, 6), dtype=np.float64)
+   obs, reward, terminated, truncated, info = walker.step(actions)
+
+Regular Humanoid and Humanoid CMU are separate native domains. Regular
+Humanoid run, stand, and walk mix with 21-dimensional actions; CMU run,
+stand, and walk mix with 56-dimensional actions. They cannot share a pool,
+even with pixels:
+
+.. code-block:: python
+
+   humanoid = envpool.make_multitask(
+       ["HumanoidRun-v1", "HumanoidStand-v1", "HumanoidWalk-v1"],
+       envs_per_task=4,
+       seed=42,
+   )  # 12 slots, action shape (12, 21)
+   humanoid_cmu = envpool.make_multitask(
+       ["HumanoidCMURun-v1", "HumanoidCMUStand-v1", "HumanoidCMUWalk-v1"],
+       envs_per_task=4,
+       seed=42,
+   )  # 12 slots, action shape (12, 56)
+
+All four Manipulator tasks can share one pool. Their ball/peg and
+bring/insert scenes differ, but the arm dynamics layout, action contract,
+and object/target pose semantics match. Each slot retains its original
+scene, including its own object and any receptacle:
+
+.. code-block:: python
+
+   manipulator = envpool.make_multitask(
+       ["ManipulatorBringBall-v1", "ManipulatorBringPeg-v1",
+        "ManipulatorInsertBall-v1", "ManipulatorInsertPeg-v1"],
+       envs_per_task=2,
+       action_repeat=2,
+       frame_stack=3,
+       seed=list(range(8)),
+   )
+
+Pixel mode additionally permits Finger spin with either turn task, Fish swim
+with upright, and Humanoid pure-state run with its other three tasks. These
+combinations have compatible topology/actions and a common pixel contract;
+they remain invalid as mixed state-observation pools. For example:
+
+.. code-block:: python
+
+   fish = envpool.make_multitask(
+       ["FishSwim-v1", "FishUpright-v1"],
+       envs_per_task=4,
+       from_pixels=True,
+       frame_stack=3,
+       action_repeat=2,
+       render_width=84,
+       render_height=84,
+       seed=list(range(8)),
+   )
+   # Pixel shape: (8, 9, 84, 84). Omitting from_pixels=True is invalid.
+
+Pixels do not remove other compatibility boundaries: Dog fetch,
+Quadruped escape/fetch, different Cartpole pole counts, LQR dimensions,
+Stacker box counts, and Swimmer link counts remain in separate groups.
+A one-task group is supported as a homogeneous pool, including duplicate
+entries for arbitrary fixed slot ordering.
+
+``info["task_id"]`` uses zero-based alphabetical order of the original task
+names within a domain, not their order in the constructor. For regular
+Humanoid the mapping is ``run=0, run_pure_state=1, stand=2, walk=3``;
+for CMU it is ``run=0, stand=1, walk=2``. Swimmer deliberately uses
+``swimmer15=0, swimmer6=1``. Task IDs are not globally unique across domains.
+``env.env_task_ids[env_id]`` gives the public task ID assigned to a slot.
+
+Assignments survive explicit, subset, and next-step automatic resets.
+Asynchronous results may reorder slots: use ``info["env_id"]`` to send each
+row's next action, and ``info["task_id"]`` for task-conditioned policies.
+A task ID is not an environment ID. The native worker queue handles every
+slot without changing the existing wrapper API.
+
+Episode limits remain per slot. All current DMC registrations use 1000
+original control steps; ``max_episode_steps`` overrides that limit for all
+selected tasks. ``action_repeat`` stops at each slot's own boundary and
+never starts a new episode inside one external step. ``frame_skip``,
+``action_repeat``, ``frame_stack``, friction, image resolution, and explicit
+camera overrides are pool-wide settings. Domain camera defaults remain the
+same as in standalone tasks.
+
+
 Dynamics and pixel-camera configuration
 ---------------------------------------
 

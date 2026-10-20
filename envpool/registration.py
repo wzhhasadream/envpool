@@ -369,7 +369,7 @@ class EnvRegistry:
         """Create one native pool with a fixed task for each environment slot.
 
         Slots follow ``task_ids`` order, with each task repeated by its count.
-        Supported backends are MetaWorld, MyoSuite, DMC Dog, and Atari. Tasks must
+        Supported backends are MetaWorld, MyoSuite, DMC, and Atari. Tasks must
         share the complete state/action spec and pool-wide configuration.
         """
         if isinstance(task_ids, (str, bytes)):
@@ -406,12 +406,11 @@ class EnvRegistry:
             ("envpool.atari", "AtariEnvSpec"),
             ("envpool.mujoco.metaworld", "MetaWorldEnvSpec"),
             ("envpool.mujoco.myosuite", "MyoSuiteEnvSpec"),
-            ("envpool.mujoco.dmc", "DmcDogEnvSpec"),
         }
-        if backend not in supported:
+        if backend not in supported and backend[0] != "envpool.mujoco.dmc":
             raise ValueError(
                 "Native multitask currently supports MetaWorld, MyoSuite, "
-                "DMC Dog, and Atari"
+                "DMC, and Atari"
             )
         continuous = kwargs.get(
             "continuous", self.specs[task_ids[0]][2].get("continuous", False)

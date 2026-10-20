@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "envpool/core/env.h"
+#include "envpool/mujoco/dmc/multitask.h"
 #include "envpool/mujoco/dmc/utils.h"
 #include "envpool/mujoco/frame_stack.h"
 #include "envpool/mujoco/offscreen_renderer.h"

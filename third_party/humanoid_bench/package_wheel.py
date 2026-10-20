@@ -2,6 +2,7 @@
 
 """Preserve the base wheel's bundled libraries in the extended binary wheel."""
 
+import configparser
 import subprocess
 import sys
 from pathlib import Path
@@ -56,8 +57,17 @@ subprocess.run(
         str(source),
     ],
     check=True,
+    stdout=sys.stderr,
 )
-wheel = next(Path(sys.argv[1]).glob("envpool-1.2.5+apex.hb1-*.whl"))
+config = configparser.ConfigParser()
+config.read(source / "setup.cfg")
+version = config["metadata"]["version"]
+wheels = sorted(Path(sys.argv[1]).glob(f"envpool-{version}-*.whl"))
+if len(wheels) != 1:
+    raise RuntimeError(
+        f"Expected one envpool {version} wheel in {sys.argv[1]}, found {wheels}"
+    )
+wheel = wheels[0]
 destination = Path(sys.argv[2])
 destination.mkdir(parents=True, exist_ok=True)
 with (

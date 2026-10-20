@@ -24,6 +24,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -42,14 +43,18 @@ class FingerEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(2), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("spin")));
+                    "task_name"_.Bind(std::string("spin")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "finger");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 2})),
         "obs:position"_.Bind(
             StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
         "obs:velocity"_.Bind(
@@ -83,6 +88,8 @@ class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   const mjtNum kEasyTargetSize = 0.07;
   const mjtNum kHardTargetSize = 0.03;
   const mjtNum kSpinVelocity = 15;
@@ -99,6 +106,8 @@ class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   mjtNum target_angle_;
 #endif
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
@@ -107,13 +116,15 @@ class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetFingerXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetFingerXML(spec.config["base_path"_],
+                         DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
             spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("finger", DmcTaskName(spec.config, env_id))),
         id_site_target_(mj_name2id(model_, mjOBJ_SITE, "target")),
         id_site_tip_(mj_name2id(model_, mjOBJ_SITE, "tip")),
         id_hinge_(GetQvelId(model_, "hinge")),
@@ -128,8 +139,8 @@ class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
         id_spinner_(GetSensorId(model_, "spinner")),
         id_touchtop_(GetSensorId(model_, "touchtop")),
         id_touchbottom_(GetSensorId(model_, "touchbottom")),
-        is_spin_(spec.config["task_name"_] == "spin") {
-    const std::string& task_name = spec.config["task_name"_];
+        is_spin_(DmcTaskName(spec.config, env_id) == "spin") {
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name == "turn_easy") {
       target_radius_ = kEasyTargetSize;
     } else if (task_name == "turn_hard") {
@@ -201,6 +212,7 @@ class FingerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

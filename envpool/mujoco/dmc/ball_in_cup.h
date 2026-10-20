@@ -23,6 +23,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -41,14 +42,18 @@ class BallInCupEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("catch")));
+                    "task_name"_.Bind(std::string("catch")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "ball_in_cup");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 0})),
         "obs:position"_.Bind(
             StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
         "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_]))
@@ -75,7 +80,11 @@ class BallInCupEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   int id_target_, id_ball_, id_ball_geom_, id_ball_x_, id_ball_z_;
+
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
 
  public:
   using Spec = EnvSpecT;
@@ -83,22 +92,24 @@ class BallInCupEnvBase : public Env<EnvSpecT>, public MujocoEnv {
 
   BallInCupEnvBase(const Spec& spec, int env_id)
       : Env<EnvSpecT>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_],
-                  GetBallInCupXML(spec.config["base_path"_],
-                                  spec.config["task_name"_]),
-                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
-                  spec.config["frame_stack"_],
-                  RenderWidthOrDefault<kFromPixels>(spec.config),
-                  RenderHeightOrDefault<kFromPixels>(spec.config),
-                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
-                  spec.config["action_repeat"_],
-                  spec.config["friction_multiplier"_]),
+        MujocoEnv(
+            spec.config["base_path"_],
+            GetBallInCupXML(spec.config["base_path"_],
+                            DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(
+            DmcTaskIndex("ball_in_cup", DmcTaskName(spec.config, env_id))),
         id_target_(mj_name2id(model_, mjOBJ_SITE, "target")),
         id_ball_(mj_name2id(model_, mjOBJ_XBODY, "ball")),
         id_ball_geom_(mj_name2id(model_, mjOBJ_GEOM, "ball")),
         id_ball_x_(GetQposId(model_, "ball_x")),
         id_ball_z_(GetQposId(model_, "ball_z")) {
-    const std::string& task_name = spec.config["task_name"_];
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name != "catch") {
       throw std::runtime_error("Unknown task_name " + task_name +
                                " for dmc ball_in_cup.");
@@ -142,6 +153,7 @@ class BallInCupEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

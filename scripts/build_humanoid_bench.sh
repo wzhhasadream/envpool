@@ -40,5 +40,5 @@ cp third_party/pip_requirements/requirements-release-lock.txt third_party/pip_re
 "$bazel" --output_user_root="$build_root/bazel" build --config=release --define=envpool_official_mujoco=true --jobs="${JOBS:-1}" --per_file_copt='envpool/mujoco/dmc/mujoco_envpool.cc@-O1' --override_repository="python_versions_3_11_x86_64-unknown-linux-gnu=$build_root/envpool-python" "${ffi_options[@]}" --@rules_python//python/config_settings:python_version=3.11 //envpool/mujoco:humanoid_bench_envpool //envpool/mujoco:mujoco_dmc_envpool
 cp bazel-bin/envpool/mujoco/humanoid_bench_envpool.so envpool/mujoco/
 cp bazel-bin/envpool/mujoco/mujoco_dmc_envpool.so envpool/mujoco/
-"$python" third_party/humanoid_bench/package_wheel.py "$build_root/envpool-wheel" "$root/dist"
-"$python" -m pip install --no-deps --force-reinstall "$root"/dist/envpool-1.2.5+apex.hb1-*.whl
+wheel="$("$python" third_party/humanoid_bench/package_wheel.py "$build_root/envpool-wheel" "$root/dist")"
+"$python" -m pip install --no-deps --force-reinstall "$wheel"

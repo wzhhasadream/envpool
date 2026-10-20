@@ -77,6 +77,29 @@ and masks have the selected batch size and follow the returned
 are routed and merged by their returned IDs. Duplicate or invalid explicit
 slot IDs are rejected.
 
+Atari episodic-life limitation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. warning::
+
+   Do not combine ``SameStepAutoReset`` with Atari ``episodic_life=True``
+   when standard life-loss pseudo-resets are desired. The wrapper explicitly
+   calls ``reset`` for each ended slot. Native explicit resets are forced
+   resets, so a life-loss termination resets the **whole game**, even when
+   lives remain and the game is not over.
+
+This is an existing limitation of the wrapper combination, not a change to
+native Atari behavior in ``1.2.5+apex.hb2``. The wrapper remains unchanged.
+Choose the reset semantics appropriate for your training setup:
+
+* To retain native life-loss pseudo-resets, use the pool's ``NEXT_STEP``
+  behavior with ``episodic_life=True``. ``PixelObservationLayout`` can be used
+  alone when the alternative pixel layout is needed; it does not reset slots.
+* To use same-step full-game resets, set ``episodic_life=False`` and apply
+  ``SameStepAutoReset``, optionally with ``PixelObservationLayout``.
+
+See :doc:`Atari <../env/atari>` for the native episodic-life options.
+
 Pixel observation layout
 ------------------------
 

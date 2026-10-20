@@ -263,6 +263,7 @@ cc_library(
         "dmc/lqr.h",
         "dmc/manipulator.h",
         "dmc/mujoco_env.h",
+        "dmc/multitask.h",
         "dmc/pendulum.h",
         "dmc/point_mass.h",
         "dmc/quadruped.h",
@@ -988,6 +989,7 @@ py_test(
         ":mujoco_dmc",
         ":playground",
         ":robotics",
+        "//envpool:registration",
         requirement("absl-py"),
     ],
 )
@@ -1159,6 +1161,7 @@ py_test(
         ":mujoco_dmc",
         ":mujoco_dmc_registration",
         "//envpool:registration",
+        "//envpool:wrappers",
         "//envpool/python:glfw_context",
         requirement("absl-py"),
         requirement("numpy"),

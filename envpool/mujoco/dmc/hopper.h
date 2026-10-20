@@ -22,6 +22,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -40,14 +41,18 @@ class HopperEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(4), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("stand")));
+                    "task_name"_.Bind(std::string("stand")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "hopper");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 1})),
         "obs:position"_.Bind(
             StackSpec(Spec<mjtNum>({6}), conf["frame_stack"_])),
         "obs:velocity"_.Bind(
@@ -75,11 +80,15 @@ class HopperEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   const mjtNum kStandHeight = 0.6;
   const mjtNum kHopSpeed = 2;
   int id_torso_, id_foot_;
   int id_torso_subtreelinvel_, id_touch_toe_, id_touch_heel_;
   bool hopping_;
+
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
 
  public:
   using Spec = EnvSpecT;
@@ -89,19 +98,21 @@ class HopperEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetHopperXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetHopperXML(spec.config["base_path"_],
+                         DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
             spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("hopper", DmcTaskName(spec.config, env_id))),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         id_foot_(mj_name2id(model_, mjOBJ_XBODY, "foot")),
         id_torso_subtreelinvel_(GetSensorId(model_, "torso_subtreelinvel")),
         id_touch_toe_(GetSensorId(model_, "touch_toe")),
         id_touch_heel_(GetSensorId(model_, "touch_heel")) {
-    const std::string& task_name = spec.config["task_name"_];
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name == "stand") {
       hopping_ = false;
     } else if (task_name == "hop") {
@@ -175,6 +186,7 @@ class HopperEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

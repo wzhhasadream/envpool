@@ -64,14 +64,18 @@ class LqrEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("lqr_2_1")));
+                    "task_name"_.Bind(std::string("lqr_2_1")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "lqr");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     int n_bodies = LqrNumBodies(conf["task_name"_]);
     return MakeDict("info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+                    "info:task_id"_.Bind(Spec<int>({-1}, {0, 1})),
                     "obs:position"_.Bind(StackSpec(Spec<mjtNum>({n_bodies}),
                                                    conf["frame_stack"_])),
                     "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({n_bodies}),
@@ -102,10 +106,14 @@ class LqrEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
   using Base::seed_;
+
+  int task_index_;
 #ifdef ENVPOOL_TEST
   std::vector<mjtNum> qvel0_;
   std::vector<mjtNum> stiffness0_;
 #endif
+
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
 
  public:
   using Spec = EnvSpecT;
@@ -115,15 +123,16 @@ class LqrEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetLqrXML(spec.config["base_path"_], spec.config["task_name"_],
+            GetLqrXML(spec.config["base_path"_],
+                      DmcTaskName(spec.config, env_id),
                       Env<EnvSpecT>::ResolveSeed(spec, env_id)),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
-            spec.config["action_repeat"_],
-            spec.config["friction_multiplier"_]) {
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("lqr", DmcTaskName(spec.config, env_id))) {
 #ifdef ENVPOOL_TEST
     qvel0_.resize(model_->nv);
     stiffness0_.resize(model_->njnt);
@@ -194,6 +203,7 @@ class LqrEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

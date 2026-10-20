@@ -53,10 +53,13 @@ class QuadrupedEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(4), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("walk")));
+                    "task_name"_.Bind(std::string("walk")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "quadruped");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     [[maybe_unused]] int qpos_size =
@@ -67,6 +70,7 @@ class QuadrupedEnvFns {
         QuadrupedHasRangefinder(conf["task_name"_]) ? 201 * 201 : 1;
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 3})),
         "obs:egocentric_state"_.Bind(
             StackSpec(Spec<mjtNum>({44}), conf["frame_stack"_])),
         "obs:torso_velocity"_.Bind(
@@ -115,6 +119,8 @@ class QuadrupedEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   enum class TaskKind : std::uint8_t { kMove, kEscape, kFetch };
 
   static constexpr mjtNum kWalkSpeed = 0.5;
@@ -148,24 +154,29 @@ class QuadrupedEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   std::vector<mjtNum> hfield0_;
 #endif
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
 
   QuadrupedEnvBase(const Spec& spec, int env_id)
       : Env<EnvSpecT>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_],
-                  GetQuadrupedXML(spec.config["base_path"_],
-                                  spec.config["task_name"_]),
-                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
-                  spec.config["frame_stack"_],
-                  RenderWidthOrDefault<kFromPixels>(spec.config),
-                  RenderHeightOrDefault<kFromPixels>(spec.config),
-                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
-                  spec.config["action_repeat"_],
-                  spec.config["friction_multiplier"_]),
-        has_rangefinder_(QuadrupedHasRangefinder(spec.config["task_name"_])),
-        has_ball_(QuadrupedHasBall(spec.config["task_name"_])),
+        MujocoEnv(
+            spec.config["base_path"_],
+            GetQuadrupedXML(spec.config["base_path"_],
+                            DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(
+            DmcTaskIndex("quadruped", DmcTaskName(spec.config, env_id))),
+        has_rangefinder_(
+            QuadrupedHasRangefinder(DmcTaskName(spec.config, env_id))),
+        has_ball_(QuadrupedHasBall(DmcTaskName(spec.config, env_id))),
         id_root_qpos_(GetQposId(model_, "root")),
         id_root_qvel_(GetQvelId(model_, "root")),
         id_ball_root_qpos_(has_ball_ ? GetQposId(model_, "ball_root") : -1),
@@ -179,7 +190,7 @@ class QuadrupedEnvBase : public Env<EnvSpecT>, public MujocoEnv {
         id_velocimeter_sensor_(GetSensorId(model_, "velocimeter")),
         id_imu_accel_sensor_(GetSensorId(model_, "imu_accel")),
         id_imu_gyro_sensor_(GetSensorId(model_, "imu_gyro")) {
-    const std::string& task_name = spec.config["task_name"_];
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name == "walk") {
       task_kind_ = TaskKind::kMove;
       desired_speed_ = kWalkSpeed;
@@ -514,6 +525,7 @@ class QuadrupedEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

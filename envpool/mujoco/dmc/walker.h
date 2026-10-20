@@ -23,6 +23,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -41,14 +42,18 @@ class WalkerEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("stand")));
+                    "task_name"_.Bind(std::string("stand")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "walker");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 2})),
         "obs:orientations"_.Bind(
             StackSpec(Spec<mjtNum>({14}), conf["frame_stack"_])),
         "obs:height"_.Bind(StackSpec(Spec<mjtNum>({}), conf["frame_stack"_])),
@@ -76,6 +81,8 @@ class WalkerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   // Minimal height of torso over foot above which stand reward is 1.
   const mjtNum kStandHeight = 1.2;
   // Horizontal speeds(meters / second) above which move reward is 1.
@@ -83,6 +90,8 @@ class WalkerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   const mjtNum kRunSpeed = 8;
   int id_torso_, id_torso_subtreelinvel_;
   mjtNum move_speed_;
+
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
 
  public:
   using Spec = EnvSpecT;
@@ -92,16 +101,18 @@ class WalkerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetWalkerXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetWalkerXML(spec.config["base_path"_],
+                         DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
             spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("walker", DmcTaskName(spec.config, env_id))),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         id_torso_subtreelinvel_(GetSensorId(model_, "torso_subtreelinvel")) {
-    const std::string& task_name = spec.config["task_name"_];
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name == "stand") {
       move_speed_ = 0;
     } else if (task_name == "walk") {
@@ -156,6 +167,7 @@ class WalkerEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

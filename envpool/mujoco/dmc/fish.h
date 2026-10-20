@@ -24,6 +24,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -42,14 +43,18 @@ class FishEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("upright")));
+                    "task_name"_.Bind(std::string("upright")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "fish");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 1})),
         "obs:joint_angles"_.Bind(
             StackSpec(Spec<mjtNum>({7}), conf["frame_stack"_])),
         "obs:upright"_.Bind(StackSpec(Spec<mjtNum>({}), conf["frame_stack"_])),
@@ -79,6 +84,8 @@ class FishEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   const std::array<std::string, 7> kJoints = {
       "tail1",          "tail_twist",   "tail2",        "finright_roll",
       "finright_pitch", "finleft_roll", "finleft_pitch"};
@@ -91,6 +98,8 @@ class FishEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   std::array<mjtNum, 3> target0_;
 #endif
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
@@ -99,19 +108,21 @@ class FishEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetFishXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetFishXML(spec.config["base_path"_],
+                       DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
             spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("fish", DmcTaskName(spec.config, env_id))),
         id_mouth_(mj_name2id(model_, mjOBJ_GEOM, "mouth")),
         id_qpos_root_(GetQposId(model_, "root")),
         id_torso_(mj_name2id(model_, mjOBJ_XBODY, "torso")),
         id_target_(mj_name2id(model_, mjOBJ_GEOM, "target")),
-        is_swim_(spec.config["task_name"_] == "swim") {
-    const std::string& task_name = spec.config["task_name"_];
+        is_swim_(DmcTaskName(spec.config, env_id) == "swim") {
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name != "upright" && task_name != "swim") {
       throw std::runtime_error("Unknown task_name " + task_name +
                                " for dmc fish.");
@@ -196,6 +207,7 @@ class FishEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

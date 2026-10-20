@@ -46,8 +46,17 @@ Here are EnvPool's several highlights:
 Installation
 ------------
 
-EnvPool is currently hosted on `PyPI <https://pypi.org/project/envpool/>`_.
-It supports Python 3.11-3.14.
+This fork's current source version is ``1.2.5+apex.hb2``, adding comprehensive
+compatible :doc:`DMC multi-task pools <env/multitask>`. Its wheels are not
+published yet. The existing
+`hb1 wheel release <https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9>`_
+contains 16 standard CPython 3.11-3.14 wheels for Linux x86_64/``aarch64``,
+macOS arm64 and Windows AMD64, without the new DMC extension. See
+:doc:`env/humanoid_bench` for installation scope and :doc:`content/build` for
+native source builds.
+
+Upstream EnvPool is hosted on `PyPI <https://pypi.org/project/envpool/>`_.
+The following unqualified install selects upstream, not this fork's ``hb2`` source.
 
 You can install EnvPool with the following command:
 

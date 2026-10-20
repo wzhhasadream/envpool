@@ -39,7 +39,7 @@ from envpool.registration import (
 )
 from envpool.wrappers import PixelObservationLayout, SameStepAutoReset
 
-__version__ = "1.2.5+apex.hb1"
+__version__ = "1.2.5+apex.hb2"
 __all__ = [
     "SameStepAutoReset",
     "PixelObservationLayout",

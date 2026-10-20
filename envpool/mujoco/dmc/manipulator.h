@@ -26,6 +26,7 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -58,14 +59,18 @@ class ManipulatorEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(10), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("bring_ball")));
+                    "task_name"_.Bind(std::string("bring_ball")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "manipulator");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 3})),
         "obs:arm_pos"_.Bind(
             StackSpec(Spec<mjtNum>({8, 2}), conf["frame_stack"_])),
         "obs:arm_vel"_.Bind(StackSpec(Spec<mjtNum>({8}), conf["frame_stack"_])),
@@ -102,6 +107,8 @@ class ManipulatorEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   const mjtNum kClose = 0.01;
   const mjtNum kPInHand = 0.1;
   const mjtNum kPInTarget = 0.1;
@@ -129,26 +136,30 @@ class ManipulatorEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   int id_site_peg_, id_site_target_peg_, id_site_target_peg_tip_;
   int id_site_peg_tip_, id_site_ball_, id_site_target_ball_;
 
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
+
  public:
   using Spec = EnvSpecT;
   using Action = typename Base::Action;
 
   ManipulatorEnvBase(const Spec& spec, int env_id)
       : Env<EnvSpecT>(spec, env_id),
-        MujocoEnv(spec.config["base_path"_],
-                  GetManipulatorXML(spec.config["base_path"_],
-                                    spec.config["task_name"_]),
-                  spec.config["frame_skip"_], spec.config["max_episode_steps"_],
-                  spec.config["frame_stack"_],
-                  RenderWidthOrDefault<kFromPixels>(spec.config),
-                  RenderHeightOrDefault<kFromPixels>(spec.config),
-                  RenderCameraIdOrDefault<kFromPixels>(spec.config),
-                  spec.config["action_repeat"_],
-                  spec.config["friction_multiplier"_]),
-        use_peg_(spec.config["task_name"_] == "bring_peg" ||
-                 spec.config["task_name"_] == "insert_peg"),
-        insert_(spec.config["task_name"_] == "insert_peg" ||
-                spec.config["task_name"_] == "insert_ball"),
+        MujocoEnv(
+            spec.config["base_path"_],
+            GetManipulatorXML(spec.config["base_path"_],
+                              DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
+            spec.config["frame_stack"_],
+            RenderWidthOrDefault<kFromPixels>(spec.config),
+            RenderHeightOrDefault<kFromPixels>(spec.config),
+            RenderCameraIdOrDefault<kFromPixels>(spec.config),
+            spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(
+            DmcTaskIndex("manipulator", DmcTaskName(spec.config, env_id))),
+        use_peg_(DmcTaskName(spec.config, env_id) == "bring_peg" ||
+                 DmcTaskName(spec.config, env_id) == "insert_peg"),
+        insert_(DmcTaskName(spec.config, env_id) == "insert_peg" ||
+                DmcTaskName(spec.config, env_id) == "insert_ball"),
         id_finger_(GetQposId(model_, "finger")),
         id_thumb_(GetQposId(model_, "thumb")),
         id_body_receptacle_(
@@ -381,6 +392,7 @@ class ManipulatorEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;

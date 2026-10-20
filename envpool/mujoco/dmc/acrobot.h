@@ -24,6 +24,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "envpool/core/async_envpool.h"
 #include "envpool/core/env.h"
@@ -42,14 +43,18 @@ class AcrobotEnvFns {
   static decltype(auto) DefaultConfig() {
     return MakeDict("frame_skip"_.Bind(1), "frame_stack"_.Bind(1),
                     "action_repeat"_.Bind(1), "friction_multiplier"_.Bind(1.0),
-                    "task_name"_.Bind(std::string("swingup")));
+                    "task_name"_.Bind(std::string("swingup")),
+                    "env_task_names"_.Bind(std::vector<std::string>{}),
+                    "env_max_episode_steps"_.Bind(std::vector<int>{}));
   }
   template <typename Config>
   static decltype(auto) StateSpec(const Config& conf) {
+    ValidateDmcTasks(conf, "acrobot");
     ValidateActionRepeat(conf["action_repeat"_]);
     ValidateFrictionMultiplier(conf["friction_multiplier"_]);
     return MakeDict(
         "info:per_timestep_reward"_.Bind(Spec<float>({-1})),
+        "info:task_id"_.Bind(Spec<int>({-1}, {0, 1})),
         "obs:orientations"_.Bind(
             StackSpec(Spec<mjtNum>({4}), conf["frame_stack"_])),
         "obs:velocity"_.Bind(StackSpec(Spec<mjtNum>({2}), conf["frame_stack"_]))
@@ -76,9 +81,13 @@ class AcrobotEnvBase : public Env<EnvSpecT>, public MujocoEnv {
   using Base::Allocate;
   using Base::gen_;
 
+  int task_index_;
+
   int id_upper_arm_, id_lower_arm_, id_target_, id_tip_, id_shoulder_,
       id_elbow_;
   bool is_sparse_;
+
+  int CurrentMaxEpisodeSteps() const override { return max_episode_steps_; }
 
  public:
   using Spec = EnvSpecT;
@@ -88,21 +97,23 @@ class AcrobotEnvBase : public Env<EnvSpecT>, public MujocoEnv {
       : Env<EnvSpecT>(spec, env_id),
         MujocoEnv(
             spec.config["base_path"_],
-            GetAcrobotXML(spec.config["base_path"_], spec.config["task_name"_]),
-            spec.config["frame_skip"_], spec.config["max_episode_steps"_],
+            GetAcrobotXML(spec.config["base_path"_],
+                          DmcTaskName(spec.config, env_id)),
+            spec.config["frame_skip"_], DmcMaxEpisodeSteps(spec.config, env_id),
             spec.config["frame_stack"_],
             RenderWidthOrDefault<kFromPixels>(spec.config),
             RenderHeightOrDefault<kFromPixels>(spec.config),
             RenderCameraIdOrDefault<kFromPixels>(spec.config),
             spec.config["action_repeat"_], spec.config["friction_multiplier"_]),
+        task_index_(DmcTaskIndex("acrobot", DmcTaskName(spec.config, env_id))),
         id_upper_arm_(mj_name2id(model_, mjOBJ_XBODY, "upper_arm")),
         id_lower_arm_(mj_name2id(model_, mjOBJ_XBODY, "lower_arm")),
         id_target_(mj_name2id(model_, mjOBJ_SITE, "target")),
         id_tip_(mj_name2id(model_, mjOBJ_SITE, "tip")),
         id_shoulder_(GetQposId(model_, "shoulder")),
         id_elbow_(GetQposId(model_, "elbow")),
-        is_sparse_(spec.config["task_name"_] == "swingup_sparse") {
-    const std::string& task_name = spec.config["task_name"_];
+        is_sparse_(DmcTaskName(spec.config, env_id) == "swingup_sparse") {
+    const std::string& task_name = DmcTaskName(spec.config, env_id);
     if (task_name != "swingup" && task_name != "swingup_sparse") {
       throw std::runtime_error("Unknown task_name " + task_name +
                                " for dmc acrobot.");
@@ -142,6 +153,7 @@ class AcrobotEnvBase : public Env<EnvSpecT>, public MujocoEnv {
     auto state = Allocate();
     state["reward"_] = reward_;
     state["info:per_timestep_reward"_] = last_reward_;
+    state["info:task_id"_] = task_index_;
     state["discount"_] = discount_;
     state["elapsed_step"_] = elapsed_step_;
     state["trunc"_] = !reset && elapsed_step_ >= max_episode_steps_;
