@@ -24,11 +24,11 @@ existing ``hb1`` wheels remain unchanged and lack the expanded DMC support.
 All 16 ``hb2`` wheel build/install/release-test jobs passed. The separate
 `comprehensive Bazel run <https://github.com/wzhhasadream/envpool/actions/runs/39372019108>`_
 passed 116/116 targets on each Linux architecture and 109/116 on Windows;
-macOS was cancelled at 112/116 with four failed targets already recorded.
+macOS was canceled at 112/116 with four failed targets already recorded.
 DMC mixed-task cases passed 162/162 on Windows and 159/162 on macOS, where
 three exact pixel comparisons failed. See
 `known limitations <https://github.com/wzhhasadream/envpool/blob/main/KNOWN_LIMITATIONS.md>`_
-for remaining GL/render/GLFW failures and the Windows ViZDoom timeout.
+for remaining GL/render failures, ``GLFW`` errors, and the Windows ViZDoom timeout.
 The wheel matrix does not establish full cross-platform oracle equivalence.
 
 Basic usage

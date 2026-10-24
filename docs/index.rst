@@ -54,7 +54,7 @@ contains 16 standard CPython 3.11-3.14 wheels for Linux x86_64/``aarch64``,
 macOS arm64 and Windows AMD64. It is not published to PyPI. All 16 wheel
 build/install/release-test jobs passed; the separate comprehensive Bazel run
 passed 116/116 targets on each Linux architecture, 109/116 on Windows, and
-was cancelled at 112/116 on macOS with four failed targets. Wheel success
+was canceled at 112/116 on macOS with four failed targets. Wheel success
 does not establish full cross-platform validation. See
 `known limitations <https://github.com/wzhhasadream/envpool/blob/main/KNOWN_LIMITATIONS.md>`_,
 :doc:`env/humanoid_bench` for installation, and :doc:`content/build` for native
