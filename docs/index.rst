@@ -46,17 +46,22 @@ Here are EnvPool's several highlights:
 Installation
 ------------
 
-This fork's current source version is ``1.2.5+apex.hb2``, adding comprehensive
-compatible :doc:`DMC multi-task pools <env/multitask>`. Its wheels are not
-published yet. The existing
-`hb1 wheel release <https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9>`_
+This fork's ``1.2.5+apex.hb2`` adds comprehensive compatible
+:doc:`DMC multi-task pools <env/multitask>`. The
+`hb2 GitHub prerelease <https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb2-e1323c3>`_
+from source ``e1323c3``
 contains 16 standard CPython 3.11-3.14 wheels for Linux x86_64/``aarch64``,
-macOS arm64 and Windows AMD64, without the new DMC extension. See
-:doc:`env/humanoid_bench` for installation scope and :doc:`content/build` for
-native source builds.
+macOS arm64 and Windows AMD64. It is not published to PyPI. All 16 wheel
+build/install/release-test jobs passed; the separate comprehensive Bazel run
+passed 116/116 targets on each Linux architecture, 109/116 on Windows, and
+was cancelled at 112/116 on macOS with four failed targets. Wheel success
+does not establish full cross-platform validation. See
+`known limitations <https://github.com/wzhhasadream/envpool/blob/main/KNOWN_LIMITATIONS.md>`_,
+:doc:`env/humanoid_bench` for installation, and :doc:`content/build` for native
+source builds.
 
 Upstream EnvPool is hosted on `PyPI <https://pypi.org/project/envpool/>`_.
-The following unqualified install selects upstream, not this fork's ``hb2`` source.
+The following unqualified install selects upstream, not this fork's ``hb2`` wheels.
 
 You can install EnvPool with the following command:
 

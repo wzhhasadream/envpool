@@ -8,8 +8,9 @@ interfaces. Flat control is supported.
 Install a published wheel
 -------------------------
 
-The verified existing binary release is the ``1.2.5+apex.hb1`` prerelease:
-`download the hb1 wheels <https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9>`_.
+The published binary release is the ``1.2.5+apex.hb2`` GitHub prerelease from
+source ``e1323c3``:
+`download the hb2 wheels <https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb2-e1323c3>`_.
 It contains 16 wheels for standard CPython 3.11, 3.12, 3.13 and 3.14 across
 Linux x86_64, Linux ``aarch64``, macOS arm64 and Windows AMD64. Choose the wheel
 matching your Python version and platform; these are not free-threaded Python
@@ -17,11 +18,18 @@ builds. Each wheel includes MuJoCo 3.6.0, model assets and native plugins.
 The original Python HumanoidBench package and a compiler are unnecessary
 when using a published wheel.
 
-The current source version is ``1.2.5+apex.hb2``. It retains HumanoidBench and
-adds comprehensive compatible :doc:`DMC mixed-task pools <multitask>`, but
-``hb2`` binaries have **not been published yet**. The ``hb1`` download above does not
-contain the ``hb2``-only DMC extensions. Local Linux DMC validation does not
-establish a completed ``hb2`` cross-platform wheel release.
+This release retains HumanoidBench and adds comprehensive compatible
+:doc:`DMC mixed-task pools <multitask>`. It is not published to PyPI; the
+existing ``hb1`` wheels remain unchanged and lack the expanded DMC support.
+All 16 ``hb2`` wheel build/install/release-test jobs passed. The separate
+`comprehensive Bazel run <https://github.com/wzhhasadream/envpool/actions/runs/39372019108>`_
+passed 116/116 targets on each Linux architecture and 109/116 on Windows;
+macOS was cancelled at 112/116 with four failed targets already recorded.
+DMC mixed-task cases passed 162/162 on Windows and 159/162 on macOS, where
+three exact pixel comparisons failed. See
+`known limitations <https://github.com/wzhhasadream/envpool/blob/main/KNOWN_LIMITATIONS.md>`_
+for remaining GL/render/GLFW failures and the Windows ViZDoom timeout.
+The wheel matrix does not establish full cross-platform oracle equivalence.
 
 Basic usage
 -----------
@@ -81,7 +89,7 @@ initial states.
 Pixel coverage in that validation was four post-step frames per selected
 task. That run did not validate full-episode alignment or other operating
 systems. JAX JIT was tested on CPU with JAX and ``jaxlib`` 0.6.0. The existence
-of the later 16-wheel ``hb1`` release does not broaden these historical oracle
+of the later ``hb1`` and ``hb2`` wheel releases does not broaden these historical oracle
 claims. See :doc:`dm_control` and :doc:`multitask` for the current DMC scope.
 
 Build from source

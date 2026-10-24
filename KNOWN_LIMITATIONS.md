@@ -1,10 +1,12 @@
 # Known limitations and validation scope
 
-This page describes the current fork source, version `1.2.5+apex.hb2`.
-Its expanded DMC mixing has been validated locally on Linux; hb2 wheels are
-not published yet. The existing [hb1 wheel release](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
+This page describes version `1.2.5+apex.hb2`, published as a
+[GitHub wheel prerelease](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb2-e1323c3)
+from commit `e1323c3f361a4c1ced4ad6f69bf4442621bca5ef`, including expanded DMC
+mixing. This is not a PyPI publication. The unchanged
+[hb1 wheel release](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
 does not include that extension. A successful wheel install or smoke test is
-not a claim of exact upstream equivalence for every task.
+not a claim of exact upstream equivalence for every task or fully green CI.
 
 ## Compatible pools, not arbitrary task mixing
 
@@ -72,12 +74,36 @@ identity, pixels, and existing oracle/render regressions. Historical
 unpopulated observation/debug fields are deliberately excluded from
 meaningful-parity assertions; existing initialized zero fields are compared.
 
-Fresh hb2 full-platform tests and packaged-wheel verification are pending.
-The previous hb1 installed-wheel matrix passed 16 build/install/test jobs,
-but its separate comprehensive Bazel run was not fully green: Windows had
-graphics/render failures and a PGX timeout, and the plugin-registration test
-had an independently fixed harness issue. Fixing the harness or moving a test's
-Windows GL preload does not by itself prove platform-wide success.
+All 16 hb2 [wheel build/install/release-test jobs](https://github.com/wzhhasadream/envpool/actions/runs/39372019218)
+passed. The exact published Linux x86_64 CPython 3.12 wheel was also checked
+against its artifact digest, installed outside the source tree, and verified
+to report `1.2.5+apex.hb2`. It passed 162 DMC mixed-task cases, 9 existing
+native-wrapper cases, 8 plugin-registration cases, and `pip check`; all 17
+native extension modules were present. The 7,711 standalone output arrays
+also matched the published hb1 reference with this release wheel.
+
+The separate [comprehensive Bazel run 39372019108](https://github.com/wzhhasadream/envpool/actions/runs/39372019108)
+finished with an overall failure for the same `e1323c3` source:
+
+- **Linux x86_64 and ARM64:** each passed 116/116 targets.
+- **Windows:** 109/116 targets passed, including all 162 DMC mixed-task cases.
+  Six targets failed: `wrappers_native_test`, `metaworld_multitask_test`,
+  `metaworld_render_test`, `mujoco_dmc_render_test`,
+  `gymnasium_space_native_test`, and `action_repeat_test`. GL/render/GLFW
+  failures remain, and `vizdoom_pretrain_test` timed out after 900 seconds.
+- **macOS:** cancelled at 112/116 targets with four failed targets already
+  recorded: `mujoco_dmc_render_test`, `dmc_multitask_test_python`,
+  `action_repeat_test`, and `wrappers_native_test`. The DMC mixed-task suite
+  passed 159/162 cases; exact pixel comparisons failed for Finger spin,
+  Humanoid run, and one wrapper-order case. The unfinished run does not
+  establish 112 passing targets or full macOS validation.
+
+The [clang-tidy run](https://github.com/wzhhasadream/envpool/actions/runs/39372019111)
+also failed on `performance-inefficient-string-concatenation` in
+`envpool/mujoco/dmc/multitask.h`. The published wheels retain their exact
+`e1323c3` source; a local style-fix check is not a fix in those binaries.
+Wheel success does not resolve these comprehensive CI failures. No test
+tolerances were widened for this release.
 
 Check the [workflows for the exact source commit](https://github.com/wzhhasadream/envpool/actions),
 not only the package version. The published wheel matrix covers standard

@@ -6,12 +6,14 @@
 
 [![PyPI](https://img.shields.io/pypi/v/envpool)](https://pypi.org/project/envpool/) [![Downloads](https://static.pepy.tech/personalized-badge/envpool?period=total&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20Download)](https://pepy.tech/project/envpool) [![arXiv](https://img.shields.io/badge/arXiv-2206.10558-b31b1b.svg)](https://arxiv.org/abs/2206.10558) [![Read the Docs](https://img.shields.io/readthedocs/envpool)](https://envpool.readthedocs.io/) [![Unittest](https://github.com/sail-sg/envpool/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/sail-sg/envpool/actions/workflows/test.yml) [![Coverage](https://sail-sg.github.io/envpool/coverage-badge.svg)](https://sail-sg.github.io/envpool/) [![GitHub issues](https://img.shields.io/github/issues/sail-sg/envpool)](https://github.com/sail-sg/envpool/issues) [![GitHub stars](https://img.shields.io/github/stars/sail-sg/envpool)](https://github.com/sail-sg/envpool/stargazers) [![GitHub forks](https://img.shields.io/github/forks/sail-sg/envpool)](https://github.com/sail-sg/envpool/network) [![GitHub license](https://img.shields.io/github/license/sail-sg/envpool)](https://github.com/sail-sg/envpool/blob/main/LICENSE)
 
-> **Fork status:** this repository's `main` prepares `1.2.5+apex.hb2`, including
-> native multi-task pools for every compatible DMC group. Published
-> [hb1 wheels](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
-> remain available, but do not contain the expanded DMC support. hb2 wheels are
-> not published yet. The badges and hosted documentation above describe
-> upstream EnvPool; use this repository's linked documentation for fork features.
+> **Fork status:** `1.2.5+apex.hb2` is available as a
+> [GitHub wheel prerelease](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb2-e1323c3)
+> from source `e1323c3`, including native multi-task pools for every compatible
+> DMC group. It is not published to PyPI. All 16 wheel build jobs passed;
+> the separate comprehensive Bazel suite has Windows failures and an incomplete
+> macOS run. See [validation status](#validation-status). The badges and hosted
+> documentation above describe upstream EnvPool; use this repository's linked
+> documentation for fork features.
 
 **EnvPool** is a C++-based batched environment pool with pybind11 and thread pool. It has high performance (\~1M raw FPS with Atari games, \~3M raw FPS with MuJoCo simulator on DGX-A100) and compatible APIs (supports Gymnasium and dm\_env, both sync and async, both single and multi player environment). Currently it supports:
 
@@ -60,31 +62,32 @@ Check out our [arXiv paper](https://arxiv.org/abs/2206.10558) for more details!
 
 ## Installation
 
-### This fork: published hb1 versus hb2 source
+### This fork: published hb2 wheels
 
-The existing [verified hb1 prerelease](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
+The [hb2 GitHub prerelease](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb2-e1323c3)
 contains 16 wheels for standard CPython 3.11-3.14 on Linux x86_64/aarch64,
 macOS Apple Silicon arm64, and Windows AMD64. Download the wheel matching
 your interpreter and operating system, then install that exact file. For
 example, **Linux x86_64 with CPython 3.12**:
 
 ```bash
-python -m pip install --force-reinstall "https://github.com/wzhhasadream/envpool/releases/download/wheels-1.2.5-apex.hb1-1676bc9/envpool-1.2.5%2Bapex.hb1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+python -m pip install "https://github.com/wzhhasadream/envpool/releases/download/wheels-1.2.5-apex.hb2-e1323c3/envpool-1.2.5%2Bapex.hb2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
 python -c "import envpool; print(envpool.__version__)"
 ```
 
-This installs `1.2.5+apex.hb1`, **not** the comprehensive DMC mixing added in
-hb2. That hb1 release includes existing Dog mixing, other supported multi-task
-backends, native HumanoidBench, and the optional Gymnasium wrappers. Use
-`--force-reinstall` when replacing an older wheel bearing the same hb1 version.
-The distinct hb2 version avoids this same-version ambiguity.
+This installs `1.2.5+apex.hb2` from commit
+`e1323c3f361a4c1ced4ad6f69bf4442621bca5ef`, including the expanded compatible
+DMC mixing, existing multi-task backends, native HumanoidBench, and optional
+Gymnasium wrappers. The release's `SHA256SUMS` lists all 16 wheel digests.
+The [hb1 wheels](https://github.com/wzhhasadream/envpool/releases/tag/wheels-1.2.5-apex.hb1-1676bc9)
+remain unchanged and do not contain the expanded DMC support. The distinct hb2
+version avoids same-version installation ambiguity.
 
-The current hb2 source must be built with the repository's
+To build hb2 from source, use the repository's
 [source-build instructions](docs/content/build.rst); installing a source
-checkout with pip alone does not compile the native extensions. Fresh hb2
-wheel builds and full-platform checks are pending. Do not substitute an hb1
-wheel when testing the hb2 examples below. No hb2 package has been published
-to PyPI.
+checkout with pip alone does not compile the native extensions. Do not
+substitute an hb1 wheel when testing the hb2 examples below. This is a
+GitHub-only prerelease; no hb2 package has been published to PyPI.
 
 ### Upstream PyPI package
 
@@ -403,11 +406,24 @@ and existing oracle/render checks. All 7,711 compared pre-existing standalone
 output arrays matched the published hb1 runtime byte-for-byte. These are
 bounded regression results, not universal upstream equivalence.
 
-The fresh hb2 full-platform Bazel and installed-wheel matrices remain pending.
-The earlier hb1 wheel matrix passed, but its separate comprehensive suite had
-Windows graphics failures and a PGX timeout; that is not all-green CI for hb2.
-See [current workflows](https://github.com/wzhhasadream/envpool/actions) and
-[known limitations](KNOWN_LIMITATIONS.md) before treating a build as release-ready.
+For release source `e1323c3`, all 16 [wheel build/install/release-test jobs](https://github.com/wzhhasadream/envpool/actions/runs/39372019218)
+passed. Additional checks of the exact published Linux x86_64 CPython 3.12
+wheel passed 162 DMC mixed-task cases, 9 native-wrapper cases, 8
+plugin-registration cases, and `pip check`; all 17 native extension modules
+were present. These wheel checks are separate from the
+[comprehensive Bazel run 39372019108](https://github.com/wzhhasadream/envpool/actions/runs/39372019108):
+
+- Linux x86_64 and ARM64 each passed 116/116 targets.
+- Windows passed 109/116 targets, including all 162 DMC mixed-task cases.
+  GL/render/GLFW failures and a ViZDoom pretrain timeout remain.
+- macOS was cancelled at 112/116 targets with four failed targets already
+  recorded. DMC mixed-task cases passed 159/162; three exact pixel-comparison
+  cases failed. This is an incomplete run, not 112 passing targets.
+
+The source's [clang-tidy run](https://github.com/wzhhasadream/envpool/actions/runs/39372019111)
+also failed on string concatenation in `envpool/mujoco/dmc/multitask.h`.
+These results do not establish fully green CI on every platform. See
+[known limitations](KNOWN_LIMITATIONS.md) for the validation scope.
 
 ## Contributing
 
